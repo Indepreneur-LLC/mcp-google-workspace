@@ -1,18 +1,62 @@
-from googleapiclient.discovery import build 
-from . import gauth
-import logging
-import base64
-import traceback
+# ===== IMPORTS ===== #
+
+## ===== STANDARD LIBRARY ===== ##
+from __future__ import annotations
+'''----------------------------'''
 from email.mime.text import MIMEText
 from typing import Tuple
+import logging
+import base64
+##-##
 
+## ===== THIRD PARTY ===== ##
+from google.oauth2.credentials import Credentials
+from googleapiclient.errors import HttpError
+from googleapiclient.discovery import build
+##-##
 
+## ===== LOCAL ===== ##
+##-##
+
+#-#
+
+# ===== GLOBALS ===== #
+
+## ===== LOGGING ===== ##
+logger = logging.getLogger(__name__)
+##-##
+
+#-#
+
+# ===== CLASSES ===== #
+
+## ===== EXCEPTIONS ===== ##
+class EmailNotFoundError(Exception):
+    pass
+
+class AttachmentNotFoundError(Exception):
+    pass
+
+class DraftNotFoundError(Exception):
+    pass
+
+class EmailParsingError(Exception):
+    pass
+##-##
+
+## ===== SERVICES ===== ##
 class GmailService():
-    def __init__(self, user_id: str):
-        credentials = gauth.get_stored_credentials(user_id=user_id)
+    def __init__(self, credentials: Credentials):
+        # Removed user_id lookup, credentials passed directly
         if not credentials:
-            raise RuntimeError("No Oauth2 credentials stored")
-        self.service = build('gmail', 'v1', credentials=credentials)
+             # Should not happen if tool layer validates, but good check
+             raise ValueError("Credentials must be provided to GmailService.")
+        try:
+            self.service = build('gmail', 'v1', credentials=credentials)
+        except Exception as e:
+            # Catch potential build errors (e.g., invalid credentials structure)
+            logger.error(f"Failed to build Gmail service: {e}", exc_info=True)
+            raise RuntimeError(f"Failed to initialize Gmail service: {e}") from e
 
     def _parse_message(self, txt, parse_body=False) -> dict | None:
         """
@@ -77,8 +121,9 @@ class GmailService():
             return metadata
 
         except Exception as e:
-            logging.error(f"Error parsing message: {str(e)}")
-            logging.error(traceback.format_exc())
+            # Keep logging for internal helper, but maybe raise specific error?
+            logging.error(f"Error parsing message structure: {e}", exc_info=True)
+            # For now, return None as the caller (get_email_by_id_with_attachments) will handle it
             return None
 
     def _extract_body(self, payload) -> str | None:
@@ -119,8 +164,9 @@ class GmailService():
             return None
 
         except Exception as e:
-            logging.error(f"Error extracting body: {str(e)}")
-            return None
+            # Keep logging for internal helper
+            logging.error(f"Error extracting body content: {e}", exc_info=True)
+            return None # Caller handles None
 
     def query_emails(self, query=None, max_results=100):
         """
@@ -134,38 +180,50 @@ class GmailService():
         Returns:
             list: List of parsed email messages, newest first
         """
-        try:
-            # Ensure max_results is within API limits
-            max_results = min(max(1, max_results), 500)
-            
-            # Get the list of messages
-            result = self.service.users().messages().list(
-                userId='me',
-                maxResults=max_results,
-                q=query if query else ''
-            ).execute()
+        # Removed outer try/except - let HttpError propagate
+        # Ensure max_results is within API limits
+        max_results = min(max(1, max_results), 500)
 
-            messages = result.get('messages', [])
-            parsed = []
+        # Get the list of messages - can raise HttpError
+        result = self.service.users().messages().list(
+            userId='me',
+            maxResults=max_results,
+            q=query if query else ''
+        ).execute()
 
-            # Fetch full message details for each message
-            for msg in messages:
+        messages = result.get('messages', [])
+        parsed = []
+        errors = [] # Track errors for individual messages
+
+        # Fetch full message details for each message
+        for msg in messages:
+            try:
+                # This call can raise HttpError (e.g., if a message was deleted between list and get)
                 txt = self.service.users().messages().get(
-                    userId='me', 
+                    userId='me',
                     id=msg['id']
                 ).execute()
                 parsed_message = self._parse_message(txt=txt, parse_body=False)
                 if parsed_message:
                     parsed.append(parsed_message)
-                    
-            return parsed
-            
-        except Exception as e:
-            logging.error(f"Error reading emails: {str(e)}")
-            logging.error(traceback.format_exc())
-            return []
+                else:
+                    # Log if parsing failed for a specific message
+                    logger.warning(f"Failed to parse message ID {msg.get('id')} during query.")
+                    errors.append({"id": msg.get('id'), "error": "Parsing failed"})
+            except HttpError as e:
+                 logger.error(f"HttpError getting message ID {msg.get('id')} during query: {e}", exc_info=True)
+                 errors.append({"id": msg.get('id'), "error": f"HTTP {e.resp.status}: {e.reason}"})
+            except Exception as e:
+                 logger.error(f"Unexpected error getting message ID {msg.get('id')} during query: {e}", exc_info=True)
+                 errors.append({"id": msg.get('id'), "error": f"Unexpected error: {e}"})
+
+
+        # Return parsed messages, potentially include errors if needed by caller
+        # For now, just return successfully parsed messages. Caller can infer failures if count mismatch.
+        # Or return a dict: {"emails": parsed, "errors": errors} ? Let's return just parsed for now.
+        return parsed
         
-    def get_email_by_id_with_attachments(self, email_id: str) -> Tuple[dict, dict] | Tuple[None, dict]:
+    def get_email_by_id_with_attachments(self, email_id: str) -> Tuple[dict, dict]:
         """
         Fetch and parse a complete email message by its ID including attachment IDs.
         
@@ -176,41 +234,54 @@ class GmailService():
             Tuple[dict, list]: Complete parsed email message including body and list of attachment IDs
             Tuple[None, list]: If retrieval or parsing fails, returns None for email and empty list for attachment IDs
         """
+        # Removed outer try/except - let HttpError propagate
+        # Fetch the complete message by ID - can raise HttpError
         try:
-            # Fetch the complete message by ID
             message = self.service.users().messages().get(
                 userId='me',
                 id=email_id
             ).execute()
-            
-            # Parse the message with body included
-            parsed_email = self._parse_message(txt=message, parse_body=True)
+        except HttpError as e:
+            if e.resp.status == 404:
+                raise EmailNotFoundError(f"Email with ID '{email_id}' not found.") from e
+            else:
+                # Re-raise other HttpErrors
+                raise
 
-            if parsed_email is None:
-                return None, []
+        # Parse the message with body included
+        parsed_email = self._parse_message(txt=message, parse_body=True)
 
-            attachments = {}
-            for part in message["payload"]["parts"]:
-                if "attachmentId" in part["body"]:
-                    attachment_id = part["body"]["attachmentId"]
-                    part_id = part["partId"]
-                    attachment = {
-                        "filename": part["filename"],
-                        "mimeType": part["mimeType"],
+        if parsed_email is None:
+            # Raise error if parsing failed
+            raise EmailParsingError(f"Failed to parse email structure for ID '{email_id}'.")
+
+        attachments = {}
+        # Use .get() for safer access to potentially missing keys
+        payload = message.get('payload', {})
+        parts = payload.get('parts', [])
+        for part in parts:
+            body = part.get('body', {})
+            if body and 'attachmentId' in body:
+                attachment_id = body['attachmentId']
+                part_id = part.get('partId') # partId might not always be present?
+                filename = part.get('filename', '') # Handle missing filename
+                mime_type = part.get('mimeType', 'application/octet-stream') # Default mimeType
+
+                if attachment_id and part_id: # Ensure key identifiers are present
+                    attachments[part_id] = {
+                        "filename": filename,
+                        "mimeType": mime_type,
                         "attachmentId": attachment_id,
-                        "partId": part_id
+                        "partId": part_id,
+                        "size": body.get('size') # Include size if available
                     }
-                    attachments[part_id] = attachment
+                else:
+                     logger.warning(f"Skipping attachment part in email {email_id} due to missing ID (partId: {part_id}, attachmentId: {attachment_id})")
 
 
-            return parsed_email, attachments
-            
-        except Exception as e:
-            logging.error(f"Error retrieving email {email_id}: {str(e)}")
-            logging.error(traceback.format_exc())
-            return None, []
+        return parsed_email, attachments
         
-    def create_draft(self, to: str, subject: str, body: str, cc: list[str] | None = None) -> dict | None:
+    def create_draft(self, to: str, subject: str, body: str, cc: list[str] | None = None) -> dict:
         """
         Create a draft email message.
         
@@ -224,42 +295,33 @@ class GmailService():
             dict: Draft message data including the draft ID if successful
             None: If creation fails
         """
+        # Removed outer try/except - let HttpError propagate
+        # Create the message in MIME format
+        mime_message = MIMEText(body)
+        mime_message['to'] = to
+        mime_message['subject'] = subject
+        if cc:
+            mime_message['cc'] = ','.join(cc)
+
+        # Encode the message
         try:
-            # Create message body
-            message = {
-                'to': to,
-                'subject': subject,
-                'text': body,
-            }
-            if cc:
-                message['cc'] = ','.join(cc)
-                
-            # Create the message in MIME format
-            mime_message = MIMEText(body)
-            mime_message['to'] = to
-            mime_message['subject'] = subject
-            if cc:
-                mime_message['cc'] = ','.join(cc)
-                
-            # Encode the message
             raw_message = base64.urlsafe_b64encode(mime_message.as_bytes()).decode('utf-8')
-            
-            # Create the draft
-            draft = self.service.users().drafts().create(
-                userId='me',
-                body={
-                    'message': {
-                        'raw': raw_message
-                    }
+        except Exception as encode_error:
+            # Handle potential encoding errors
+            logger.error(f"Error encoding draft message: {encode_error}", exc_info=True)
+            raise ValueError("Failed to encode draft message content.") from encode_error
+
+        # Create the draft - can raise HttpError
+        draft = self.service.users().drafts().create(
+            userId='me',
+            body={
+                'message': {
+                    'raw': raw_message
                 }
-            ).execute()
-            
-            return draft
-            
-        except Exception as e:
-            logging.error(f"Error creating draft: {str(e)}")
-            logging.error(traceback.format_exc())
-            return None
+            }
+        ).execute()
+
+        return draft
         
     def delete_draft(self, draft_id: str) -> bool:
         """
@@ -272,18 +334,21 @@ class GmailService():
             bool: True if deletion was successful, False otherwise
         """
         try:
+            # This call can raise HttpError
             self.service.users().drafts().delete(
                 userId='me',
                 id=draft_id
             ).execute()
+            # Gmail API returns empty body on success for delete
             return True
-            
-        except Exception as e:
-            logging.error(f"Error deleting draft {draft_id}: {str(e)}")
-            logging.error(traceback.format_exc())
-            return False
+
+        except HttpError as e:
+            if e.resp.status == 404:
+                raise DraftNotFoundError(f"Draft with ID '{draft_id}' not found.") from e
+            else:
+                raise
         
-    def create_reply(self, original_message: dict, reply_body: str, send: bool = False, cc: list[str] | None = None) -> dict | None:
+    def create_reply(self, original_message: dict, reply_body: str, send: bool = False, cc: list[str] | None = None) -> dict:
         """
         Create a reply to an email message and either send it or save as draft.
         
@@ -297,65 +362,81 @@ class GmailService():
             dict: Sent message or draft data if successful
             None: If operation fails
         """
+        # Removed outer try/except - let HttpError/ValueError propagate
+        to_address = original_message.get('from')
+        # Extract original message ID safely
+        original_message_id = original_message.get('id')
+        original_thread_id = original_message.get('threadId')
+
+        if not to_address:
+            raise ValueError("Could not determine original sender's address from the provided message object.")
+        if not original_message_id:
+             raise ValueError("Could not determine original message ID from the provided message object.")
+        if not original_thread_id:
+             raise ValueError("Could not determine original thread ID from the provided message object.")
+
+
+        subject = original_message.get('subject', '')
+        if not subject.lower().startswith('re:'):
+            subject = f"Re: {subject}"
+
+        # Construct reply body (keep existing logic)
+        original_date = original_message.get('date', '')
+        original_from = original_message.get('from', '') # Already checked above
+        original_body = original_message.get('body', '') # Body might be missing if not parsed fully before
+
+        full_reply_body = (
+            f"{reply_body}\n\n"
+            f"On {original_date}, {original_from} wrote:\n"
+            f"> {original_body.replace('\n', '\n> ') if original_body else '[Original message body not available]'}"
+        )
+
+        # Create MIME message
+        mime_message = MIMEText(full_reply_body)
+        mime_message['to'] = to_address
+        mime_message['subject'] = subject
+        if cc:
+            mime_message['cc'] = ','.join(cc)
+
+        # Set headers for threading
+        mime_message['In-Reply-To'] = original_message_id
+        # Use References header if available, otherwise fallback to Message-ID
+        references = original_message.get('references') or original_message.get('message_id')
+        if references:
+             mime_message['References'] = f"{references} {original_message_id}" # Append original ID
+        else:
+             mime_message['References'] = original_message_id
+
+
+        # Encode message
         try:
-            to_address = original_message.get('from')
-            if not to_address:
-                raise ValueError("Could not determine original sender's address")
-            
-            subject = original_message.get('subject', '')
-            if not subject.lower().startswith('re:'):
-                subject = f"Re: {subject}"
-
-
-            original_date = original_message.get('date', '')
-            original_from = original_message.get('from', '')
-            original_body = original_message.get('body', '')
-        
-            full_reply_body = (
-                f"{reply_body}\n\n"
-                f"On {original_date}, {original_from} wrote:\n"
-                f"> {original_body.replace('\n', '\n> ') if original_body else '[No message body]'}"
-            )
-
-            mime_message = MIMEText(full_reply_body)
-            mime_message['to'] = to_address
-            mime_message['subject'] = subject
-            if cc:
-                mime_message['cc'] = ','.join(cc)
-                
-            mime_message['In-Reply-To'] = original_message.get('id', '')
-            mime_message['References'] = original_message.get('id', '')
-            
             raw_message = base64.urlsafe_b64encode(mime_message.as_bytes()).decode('utf-8')
-            
-            message_body = {
-                'raw': raw_message,
-                'threadId': original_message.get('threadId')  # Ensure it's added to the same thread
-            }
+        except Exception as encode_error:
+            logger.error(f"Error encoding reply message: {encode_error}", exc_info=True)
+            raise ValueError("Failed to encode reply message content.") from encode_error
 
-            if send:
-                # Send the reply immediately
-                result = self.service.users().messages().send(
-                    userId='me',
-                    body=message_body
-                ).execute()
-            else:
-                # Save as draft
-                result = self.service.users().drafts().create(
-                    userId='me',
-                    body={
-                        'message': message_body
-                    }
-                ).execute()
-            
-            return result
-            
-        except Exception as e:
-            logging.error(f"Error {'sending' if send else 'drafting'} reply: {str(e)}")
-            logging.error(traceback.format_exc())
-            return None
+        message_body = {
+            'raw': raw_message,
+            'threadId': original_thread_id
+        }
+
+        # Send or Draft - can raise HttpError
+        if send:
+            result = self.service.users().messages().send(
+                userId='me',
+                body=message_body
+            ).execute()
+        else:
+            result = self.service.users().drafts().create(
+                userId='me',
+                body={
+                    'message': message_body
+                }
+            ).execute()
+
+        return result
         
-    def get_attachment(self, message_id: str, attachment_id: str) -> dict | None:
+    def get_attachment(self, message_id: str, attachment_id: str) -> dict:
         """
         Retrieves a Gmail attachment by its ID.
         
@@ -368,17 +449,32 @@ class GmailService():
             None: If retrieval fails
         """
         try:
+            # This call can raise HttpError
             attachment = self.service.users().messages().attachments().get(
                 userId='me',
-                messageId=message_id, 
+                messageId=message_id,
                 id=attachment_id
             ).execute()
+
+            # Check if data is present
+            attachment_data = attachment.get("data")
+            if attachment_data is None:
+                 # This might indicate an issue even if the API call succeeded
+                 raise AttachmentNotFoundError(f"Attachment with ID '{attachment_id}' found but contained no data.")
+
             return {
                 "size": attachment.get("size"),
-                "data": attachment.get("data")
+                "data": attachment_data
             }
-            
-        except Exception as e:
-            logging.error(f"Error retrieving attachment {attachment_id} from message {message_id}: {str(e)}")
-            logging.error(traceback.format_exc())
-            return None
+        except HttpError as e:
+            if e.resp.status == 404:
+                 raise AttachmentNotFoundError(f"Attachment with ID '{attachment_id}' not found in message '{message_id}'.") from e
+            # Handle 403 Forbidden?
+            elif e.resp.status == 403:
+                 raise PermissionError(f"Permission denied accessing attachment '{attachment_id}' in message '{message_id}'.") from e
+            else:
+                # Re-raise other HttpErrors
+                raise
+##-##
+
+#-#
