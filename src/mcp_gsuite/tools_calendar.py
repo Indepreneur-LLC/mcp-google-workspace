@@ -80,11 +80,15 @@ async def list_calendars(oauth_state: str) -> Sequence[TextContent | ImageConten
             data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
         )
     except HttpError as e:
-        logger.error(f"Google API HTTP error in list_calendars for user {GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+        logger.error(f"Google API HTTP error in list_calendars for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in list_calendars for user {GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to list calendars for {GLOBAL_USER_ID}. Reason: {e}")
+        logger.error(f"Unexpected error in list_calendars for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to list calendars for "
+                                                f"{GLOBAL_USER_ID}. Reason: {e}")
 
 @app.tool(
     name="get_calendar_events",
@@ -104,11 +108,13 @@ async def list_calendars(oauth_state: str) -> Sequence[TextContent | ImageConten
             },
             "time_min": {
                 "type": "string",
-                "description": "Start time in RFC3339 format (e.g. 2024-12-01T00:00:00Z). Defaults to current time if not specified."
+                "description": "Start time in RFC3339 format (e.g. 2024-12-01T00:00:00Z). "
+                               "Defaults to current time if not specified."
             },
             "time_max": {
                 "type": "string",
-                "description": "End time in RFC3339 format (e.g. 2024-12-31T23:59:59Z). Optional."
+                "description": "End time in RFC3339 format (e.g. 2024-12-31T23:59:59Z). "
+                               "Optional."
             },
             "max_results": {
                 "type": "integer",
@@ -131,7 +137,14 @@ async def list_calendars(oauth_state: str) -> Sequence[TextContent | ImageConten
         tags=["calendar", "events", "get", "list"]
     )
 )
-async def get_calendar_events(oauth_state: str, calendar_id: str = 'primary', time_min: str | None = None, time_max: str | None = None, max_results: int = 250, show_deleted: bool = False) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+async def get_calendar_events(
+    oauth_state: str,
+    calendar_id: str = 'primary',
+    time_min: str | None = None,
+    time_max: str | None = None,
+    max_results: int = 250,
+    show_deleted: bool = False
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Retrieves Google Calendar events."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -149,7 +162,8 @@ async def get_calendar_events(oauth_state: str, calendar_id: str = 'primary', ti
         return events # Return raw data
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for get_calendar_events (user: {GLOBAL_USER_ID}, calendar: {calendar_id}): {auth_error}")
+        logger.warning(f"Authentication required for get_calendar_events "
+                       f"(user: {GLOBAL_USER_ID}, calendar: {calendar_id}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -160,15 +174,19 @@ async def get_calendar_events(oauth_state: str, calendar_id: str = 'primary', ti
     except HttpError as e:
         # Check for 404 specifically, could indicate calendar not found
         if e.resp.status == 404:
-             logger.warning(f"Calendar {calendar_id} not found for user {GLOBAL_USER_ID}: {e}")
-             raise JSONRPCError(code=-32014, message=f"Calendar with ID '{calendar_id}' not found.")
+            logger.warning(f"Calendar {calendar_id} not found for user {GLOBAL_USER_ID}: {e}")
+            raise JSONRPCError(code=-32014, message=f"Calendar with ID '{calendar_id}' not found.")
         else:
-            logger.error(f"Google API HTTP error in get_calendar_events for user {GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            logger.error(f"Google API HTTP error in get_calendar_events for user "
+                         f"{GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
+            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                    f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in get_calendar_events for user {GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to get events for calendar {calendar_id} for user {GLOBAL_USER_ID}. Reason: {e}")
-###-###
+        logger.error(f"Unexpected error in get_calendar_events for user "
+                     f"{GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to get events for calendar {calendar_id} "
+                                                f"for user {GLOBAL_USER_ID}. Reason: {e}")
+##-##
 
 ### ----- WRITE/MODIFY TOOLS ----- ###
 @app.tool(
@@ -201,11 +219,11 @@ async def get_calendar_events(oauth_state: str, calendar_id: str = 'primary', ti
             },
             "start_time": {
                 "type": "string",
-                "description": "Start time in RFC3339 format (e.g. 2024-12-01T10:00:00Z)"
+                "description": "Start time in RFC3339 format (e.g. 2024-12-01T10:00:00Z)",
             },
             "end_time": {
                 "type": "string",
-                "description": "End time in RFC3339 format (e.g. 2024-12-01T11:00:00Z)"
+                "description": "End time in RFC3339 format (e.g. 2024-12-01T11:00:00Z)",
             },
             "attendees": {
                 "type": "array",
@@ -232,7 +250,18 @@ async def get_calendar_events(oauth_state: str, calendar_id: str = 'primary', ti
         tags=["calendar", "events", "create"]
     )
 )
-async def create_calendar_event(oauth_state: str, summary: str, start_time: str, end_time: str, calendar_id: str = 'primary', location: str | None = None, description: str | None = None, attendees: list[str] | None = None, send_notifications: bool = True, timezone: str | None = None) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+async def create_calendar_event(
+    oauth_state: str,
+    summary: str,
+    start_time: str,
+    end_time: str,
+    calendar_id: str = 'primary',
+    location: str | None = None,
+    description: str | None = None,
+    attendees: list[str] | None = None,
+    send_notifications: bool = True,
+    timezone: str | None = None
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Creates a new Google Calendar event."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -255,7 +284,8 @@ async def create_calendar_event(oauth_state: str, summary: str, start_time: str,
         return event # Return raw data
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for create_calendar_event (user: {GLOBAL_USER_ID}, calendar: {calendar_id}): {auth_error}")
+        logger.warning(f"Authentication required for create_calendar_event "
+                       f"(user: {GLOBAL_USER_ID}, calendar: {calendar_id}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -266,17 +296,23 @@ async def create_calendar_event(oauth_state: str, summary: str, start_time: str,
     except HttpError as e:
         # Check for 404 specifically, could indicate calendar not found
         if e.resp.status == 404:
-             logger.warning(f"Calendar {calendar_id} not found for event creation by user {GLOBAL_USER_ID}: {e}")
-             raise JSONRPCError(code=-32014, message=f"Calendar with ID '{calendar_id}' not found.")
+            logger.warning(f"Calendar {calendar_id} not found for event creation by user "
+                           f"{GLOBAL_USER_ID}: {e}")
+            raise JSONRPCError(code=-32014, message=f"Calendar with ID '{calendar_id}' not found.")
         else:
-            logger.error(f"Google API HTTP error in create_calendar_event for user {GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            logger.error(f"Google API HTTP error in create_calendar_event for user "
+                         f"{GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
+            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                    f"{e.reason}. Details: {e.content.decode()}")
     except ValueError as ve: # Catch potential validation errors from service layer
-        logger.warning(f"Validation error creating event for user {GLOBAL_USER_ID}, calendar {calendar_id}: {ve}")
-        raise JSONRPCError(code=-32602, message=f"Invalid parameters for creating event: {ve}") # Use invalid params code
+        logger.warning(f"Validation error creating event for user {GLOBAL_USER_ID}, "
+                       f"calendar {calendar_id}: {ve}")
+        raise JSONRPCError(code=-32602, message=f"Invalid parameters for creating event: {ve}")
     except Exception as e:
-        logger.error(f"Unexpected error in create_calendar_event for user {GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to create event in calendar {calendar_id} for user {GLOBAL_USER_ID}. Reason: {e}")
+        logger.error(f"Unexpected error in create_calendar_event for user "
+                     f"{GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to create event in calendar {calendar_id} "
+                                                f"for user {GLOBAL_USER_ID}. Reason: {e}")
 
 @app.tool(
     name="delete_calendar_event",
@@ -312,7 +348,12 @@ async def create_calendar_event(oauth_state: str, summary: str, start_time: str,
         tags=["calendar", "events", "delete"]
     )
 )
-async def delete_calendar_event(oauth_state: str, event_id: str, calendar_id: str = 'primary', send_notifications: bool = True) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+async def delete_calendar_event(
+    oauth_state: str,
+    event_id: str,
+    calendar_id: str = 'primary',
+    send_notifications: bool = True
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Deletes a Google Calendar event by ID."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -331,11 +372,15 @@ async def delete_calendar_event(oauth_state: str, event_id: str, calendar_id: st
         else:
             # Assuming service layer raises specific error if deletion fails (e.g., 404)
             # This path might not be reached if HttpError is caught below
-            logger.error(f"delete_event returned False for event {event_id}, calendar {calendar_id}, user {GLOBAL_USER_ID}")
-            raise JSONRPCError(code=-32015, message=f"Failed to delete event {event_id} from calendar {calendar_id}. It might not exist or an error occurred.")
+            logger.error(f"delete_event returned False for event {event_id}, "
+                         f"calendar {calendar_id}, user {GLOBAL_USER_ID}")
+            raise JSONRPCError(code=-32015, message=f"Failed to delete event {event_id} from "
+                                                    f"calendar {calendar_id}. It might not exist "
+                                                    f"or an error occurred.")
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for delete_calendar_event (user: {GLOBAL_USER_ID}, calendar: {calendar_id}, event: {event_id}): {auth_error}")
+        logger.warning(f"Authentication required for delete_calendar_event "
+                       f"(user: {GLOBAL_USER_ID}, calendar: {calendar_id}, event: {event_id}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -346,16 +391,22 @@ async def delete_calendar_event(oauth_state: str, event_id: str, calendar_id: st
     except HttpError as e:
         # Check for 404 (event not found) or 410 (event gone/deleted)
         if e.resp.status in [404, 410]:
-             logger.warning(f"Event {event_id} not found or already gone in calendar {calendar_id} for user {GLOBAL_USER_ID}: {e}")
-             # Consider returning success or specific code? For now, raise specific error.
-             raise JSONRPCError(code=-32016, message=f"Event with ID {event_id} not found or already deleted in calendar '{calendar_id}'.")
+            logger.warning(f"Event {event_id} not found or already gone in calendar "
+                           f"{calendar_id} for user {GLOBAL_USER_ID}: {e}")
+            # Consider returning success or specific code? For now, raise specific error.
+            raise JSONRPCError(code=-32016, message=f"Event with ID {event_id} not found or "
+                                                    f"already deleted in calendar '{calendar_id}'.")
         else:
-            logger.error(f"Google API HTTP error in delete_calendar_event for user {GLOBAL_USER_ID}, calendar {calendar_id}, event {event_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            logger.error(f"Google API HTTP error in delete_calendar_event for user "
+                         f"{GLOBAL_USER_ID}, calendar {calendar_id}, event {event_id}: {e}", exc_info=True)
+            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                    f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in delete_calendar_event for user {GLOBAL_USER_ID}, calendar {calendar_id}, event {event_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to delete event {event_id} from calendar {calendar_id} for user {GLOBAL_USER_ID}. Reason: {e}")
-###-###
+        logger.error(f"Unexpected error in delete_calendar_event for user "
+                     f"{GLOBAL_USER_ID}, calendar {calendar_id}, event {event_id}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to delete event {event_id} from "
+                                                f"calendar {calendar_id} for user {GLOBAL_USER_ID}. Reason: {e}")
+##-##
 
 ##-##
 

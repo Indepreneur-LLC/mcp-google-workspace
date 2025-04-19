@@ -1,23 +1,48 @@
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError # Import HttpError
-# Removed gauth import
-import logging
-import traceback # Keep for internal logging for now
-from datetime import datetime
-import pytz # Keep for default time_min logic
-from google.oauth2.credentials import Credentials # Import Credentials type hint
+# ===== IMPORTS ===== #
 
+## ===== STANDARD LIBRARY ===== ##
+import logging
+from datetime import datetime
+import pytz # Used for default time_min logic
+##-##
+
+## ===== THIRD PARTY ===== ##
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from google.oauth2.credentials import Credentials
+##-##
+
+## ===== LOCAL ===== ##
+# (No local imports currently)
+##-##
+
+#-#
+
+# ===== GLOBALS ===== #
+
+## ===== LOGGING ===== ##
+logger = logging.getLogger(__name__) # Assuming logger setup elsewhere or standard config
+##-##
+
+#-#
+
+# ===== CLASSES ===== #
+
+## ===== EXCEPTIONS ===== ##
 # Define custom exceptions
 class CalendarNotFoundError(Exception):
     pass
 
 class EventNotFoundError(Exception):
     pass
+##-##
+
+## ===== SERVICES ===== ##
 class CalendarService():
     def __init__(self, credentials: Credentials):
         # Removed user_id lookup, credentials passed directly
         if not credentials:
-             raise ValueError("Credentials must be provided to CalendarService.")
+            raise ValueError("Credentials must be provided to CalendarService.")
         try:
             # Build the service - can raise errors on invalid creds
             self.service = build('calendar', 'v3', credentials=credentials)
@@ -52,11 +77,18 @@ class CalendarService():
                     'selected': calendar_entry.get('selected') # Add selected status
                 })
             else:
-                 logger.warning(f"Skipping unexpected item in calendar list: {calendar_entry.get('kind')}")
+                logger.warning(f"Skipping unexpected item in calendar list: {calendar_entry.get('kind')}")
 
         return calendars
 
-    def get_events(self, time_min=None, time_max=None, max_results=250, show_deleted=False, calendar_id: str ='primary') -> list: # Raises HttpError, CalendarNotFoundError
+    def get_events(
+        self,
+        time_min=None,
+        time_max=None,
+        max_results=250,
+        show_deleted=False,
+        calendar_id: str = 'primary'
+    ) -> list: # Raises HttpError, CalendarNotFoundError
         """
         Retrieve calendar events within a specified time range.
         
@@ -130,11 +162,18 @@ class CalendarService():
 
         return processed_events
         
-    def create_event(self, summary: str, start_time: str, end_time: str, 
-                location: str | None = None, description: str | None = None, 
-                attendees: list | None = None, send_notifications: bool = True,
-                timezone: str | None = None,
-                calendar_id : str = 'primary') -> dict: # Raises HttpError, CalendarNotFoundError, ValueError
+    def create_event(
+        self,
+        summary: str,
+        start_time: str,
+        end_time: str,
+        location: str | None = None,
+        description: str | None = None,
+        attendees: list | None = None,
+        send_notifications: bool = True,
+        timezone: str | None = None,
+        calendar_id: str = 'primary'
+    ) -> dict: # Raises HttpError, CalendarNotFoundError, ValueError
         """
         Create a new calendar event.
         
@@ -149,12 +188,12 @@ class CalendarService():
             timezone (str, optional): Timezone for the event (e.g. 'America/New_York')
             
         Returns:
-            dict: Created event data or None if creation fails
+            dict: Created event data. Raises ValueError, HttpError, or CalendarNotFoundError on failure.
         """
         # Removed outer try/except - let HttpError/ValueError propagate
         # Basic validation (more robust date parsing could be added)
         if not summary or not start_time or not end_time:
-             raise ValueError("Summary, start_time, and end_time are required to create an event.")
+            raise ValueError("Summary, start_time, and end_time are required to create an event.")
 
         # Prepare event data
         event_body = {
@@ -177,7 +216,7 @@ class CalendarService():
         if attendees:
             # Validate attendee format slightly
             if not isinstance(attendees, list) or not all(isinstance(a, str) for a in attendees):
-                 raise ValueError("Attendees must be a list of email strings.")
+                raise ValueError("Attendees must be a list of email strings.")
             event_body['attendees'] = [{'email': email} for email in attendees]
 
         # Create the event - can raise HttpError
@@ -195,7 +234,12 @@ class CalendarService():
                 # Re-raise other HttpErrors (e.g., 400 for bad request/invalid time format)
                 raise
         
-    def delete_event(self, event_id: str, send_notifications: bool = True, calendar_id: str = 'primary') -> bool: # Raises HttpError, EventNotFoundError
+    def delete_event(
+        self,
+        event_id: str,
+        send_notifications: bool = True,
+        calendar_id: str = 'primary'
+    ) -> bool: # Raises HttpError, EventNotFoundError
         """
         Delete a calendar event by its ID.
         
@@ -204,7 +248,7 @@ class CalendarService():
             send_notifications (bool): Whether to send cancellation notifications to attendees
             
         Returns:
-            bool: True if deletion was successful, False otherwise
+            bool: True if deletion was successful. Raises EventNotFoundError or HttpError on failure.
         """
         # Removed outer try/except - let HttpError propagate
         try:
@@ -219,7 +263,13 @@ class CalendarService():
         except HttpError as e:
             # 404 or 410 indicate event not found/gone
             if e.resp.status in [404, 410]:
-                raise EventNotFoundError(f"Event with ID '{event_id}' not found or already deleted in calendar '{calendar_id}'.") from e
+                raise EventNotFoundError(
+                    f"Event with ID '{event_id}' not found or already deleted in calendar '{calendar_id}'."
+                ) from e
             else:
                 # Re-raise other HttpErrors
                 raise
+##-##
+
+
+#-#

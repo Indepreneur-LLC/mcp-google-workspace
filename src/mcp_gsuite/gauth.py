@@ -8,7 +8,8 @@ import os
 ##-##
 
 ## ===== THIRD-PARTY ===== ##
-### ----- GOOGLE TRASH ----- ###
+
+### ----- GOOGLE SCHIZO IMPORTS ----- ###
 from google.oauth2.credentials import Credentials as GoogleCredentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.auth.exceptions import RefreshError
@@ -16,8 +17,8 @@ from googleapiclient.errors import HttpError
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import Flow
 ###-###
+from pydantic import BaseModel
 import requests
-import pydantic
 import redis
 ##-##
 
@@ -28,9 +29,15 @@ import redis
 
 # ===== GLOBALS ===== #
 
+## ===== EXCEPTIONS ===== ##
+class AuthenticationError(Exception):
+    """Custom exception for failure to authenticate using stored credentials."""
+    pass
+##-##
+
 ## ===== CONSTANTS ===== ##
 
-### ----- SECRETS PREP ----- ###
+### ----- ARGPARSE CONFIG ----- ###
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--gauth-file",
@@ -39,7 +46,7 @@ parser.add_argument(
     help="Path to client secrets file",
 )
 args, _ = parser.parse_known_args()
-###-###
+##-##
 CLIENTSECRETS_LOCATION = args.gauth_file
 
 REDIRECT_URI = 'https://server.indepreneur.io/mcp/oauth/callback' # Updated based on Nginx setup
@@ -62,8 +69,26 @@ try:
     redis_pubsub_client.ping()
     logging.info(f"[gauth] Connected to Redis for Pub/Sub at {REDIS_HOST}:{REDIS_PORT}")
 except redis.exceptions.ConnectionError as e:
-    logging.error(f"[gauth] FATAL: Could not connect to Redis for Pub/Sub at {REDIS_HOST}:{REDIS_PORT}. Notifications will fail. Error: {e}")
+    logging.error(f"[gauth] FATAL: Could not connect to Redis for Pub/Sub at "
+                  f"{REDIS_HOST}:{REDIS_PORT}. Notifications will fail. Error: {e}")
     redis_pubsub_client = None
+
+# --- Redis Client for Credential Storage ---
+_redis_cred_client = None
+##-##
+
+#-#
+
+# ===== CLASSES ===== #
+
+## ===== MODELS ===== ##
+class AccountInfo(BaseModel):
+    account_type: str
+    extra_info: str
+    email: str
+
+    def to_description(self):
+        return f"""Account for email: {self.email} of type: {self.account_type}. Extra info for: {self.extra_info}"""
 ##-##
 
 #-#
@@ -83,21 +108,6 @@ def notify_aggregator_success(state: str):
         logging.info(f"[gauth] Published state '{state}' to Redis channel '{REDIS_CHANNEL}'.")
     except Exception as e:
         logging.error(f"[gauth] Failed to publish state '{state}' to Redis channel '{REDIS_CHANNEL}': {e}")
-#-#
-
-
-class AccountInfo(pydantic.BaseModel):
-
-    email: str
-    account_type: str
-    extra_info: str
-
-    def __init__(self, email: str, account_type: str, extra_info: str = ""):
-        super().__init__(email=email, account_type=account_type, extra_info=extra_info)
-
-    def to_description(self):
-        return f"""Account for email: {self.email} of type: {self.account_type}. Extra info for: {self.extra_info}"""
-
 
 def get_accounts_file() -> str:
     parser = argparse.ArgumentParser()
@@ -110,22 +120,12 @@ def get_accounts_file() -> str:
     args, _ = parser.parse_known_args()
     return args.accounts_file
 
-
 def get_account_info() -> list[AccountInfo]:
     accounts_file = get_accounts_file()
     with open(accounts_file) as f:
         data = json.load(f)
         accounts = data.get("accounts", [])
         return [AccountInfo.model_validate(acc) for acc in accounts]
-
-# Removed unused exception classes: GetCredentialsException, CodeExchangeException, NoRefreshTokenException, NoUserIdException
-# Add new exception for auth failure
-class AuthenticationError(Exception):
-    """Custom exception for failure to authenticate using stored credentials."""
-    pass
-
-# --- Redis Client for Credential Storage ---
-_redis_cred_client = None
 
 def _get_redis_client():
     """Initializes and returns the Redis client for credential storage."""
@@ -134,9 +134,11 @@ def _get_redis_client():
         try:
             _redis_cred_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
             _redis_cred_client.ping()
-            logging.info(f"[gauth] Connected to Redis for Credential Storage at {REDIS_HOST}:{REDIS_PORT}")
+            logging.info(f"[gauth] Connected to Redis for Credential Storage at "
+                         f"{REDIS_HOST}:{REDIS_PORT}")
         except redis.exceptions.ConnectionError as e:
-            logging.error(f"[gauth] FATAL: Could not connect to Redis for Credential Storage at {REDIS_HOST}:{REDIS_PORT}. Error: {e}")
+            logging.error(f"[gauth] FATAL: Could not connect to Redis for Credential Storage at "
+                          f"{REDIS_HOST}:{REDIS_PORT}. Error: {e}")
             _redis_cred_client = None # Ensure it stays None if connection fails
     return _redis_cred_client
 
@@ -148,20 +150,23 @@ def store_refresh_token_in_redis(user_id: str, refresh_token: str):
     """Stores the user's refresh token securely in Redis."""
     redis_client = _get_redis_client()
     if not redis_client:
-        logging.error(f"[gauth] Cannot store refresh token for {user_id}: Redis client not connected.")
+        logging.error(f"[gauth] Cannot store refresh token for {user_id}: "
+                      f"Redis client not connected.")
         return
     try:
         key = _get_redis_key_for_token(user_id)
         redis_client.set(key, refresh_token)
         logging.info(f"[gauth] Stored refresh token for user {user_id} in Redis.")
     except Exception as e:
-        logging.error(f"[gauth] Failed to store refresh token for user {user_id} in Redis: {e}")
+        logging.error(f"[gauth] Failed to store refresh token for user {user_id} "
+                      f"in Redis: {e}")
 
 def _get_refresh_token_from_redis(user_id: str) -> str | None:
     """Retrieves the user's refresh token from Redis."""
     redis_client = _get_redis_client()
     if not redis_client:
-        logging.error(f"[gauth] Cannot retrieve refresh token for {user_id}: Redis client not connected.")
+        logging.error(f"[gauth] Cannot retrieve refresh token for {user_id}: "
+                      f"Redis client not connected.")
         return None
     try:
         key = _get_redis_key_for_token(user_id)
@@ -173,7 +178,8 @@ def _get_refresh_token_from_redis(user_id: str) -> str | None:
             logging.warning(f"[gauth] No refresh token found in Redis for user {user_id}.")
             return None
     except Exception as e:
-        logging.error(f"[gauth] Failed to retrieve refresh token for user {user_id} from Redis: {e}")
+        logging.error(f"[gauth] Failed to retrieve refresh token for user {user_id} "
+                      f"from Redis: {e}")
         return None
 
 def get_credentials_for_user(user_id: str) -> GoogleCredentials | None:
@@ -211,37 +217,19 @@ def get_credentials_for_user(user_id: str) -> GoogleCredentials | None:
             scopes=SCOPES
         )
 
-        # Check if token needs refreshing and refresh it.
-        # The Credentials object handles this implicitly when used, but we can
-        # force a check/refresh here if needed, though it might block.
-        # For now, let's rely on the auto-refresh mechanism.
-        # try:
-        #     if not credentials.valid:
-        #         logging.info(f"[gauth] Credentials for {user_id} require refresh.")
-        #         credentials.refresh(GoogleAuthRequest())
-        #         logging.info(f"[gauth] Credentials for {user_id} refreshed successfully.")
-        #         # Note: The new refresh token (if any) is handled internally by the Credentials object.
-        #         # We don't need to explicitly re-store it unless the original one was revoked.
-        # except RefreshError as e:
-        #     logging.error(f"[gauth] Failed to refresh credentials for user {user_id}: {e}. User may need to re-authenticate.")
-        #     # Consider deleting the invalid refresh token from Redis here?
-        #     # delete_refresh_token_from_redis(user_id)
-        #     return None # Indicate failure
-        # except Exception as e:
-        #      logging.error(f"[gauth] Unexpected error during credential refresh check for {user_id}: {e}")
-        #      return None
-
-        logging.info(f"[gauth] Successfully created credentials object for user {user_id} using stored refresh token.")
+        logging.info(f"[gauth] Successfully created credentials object for user {user_id} "
+                     f"using stored refresh token.")
         return credentials
 
     except FileNotFoundError:
-        logging.error(f"[gauth] Client secrets file not found at {CLIENTSECRETS_LOCATION}")
+        logging.error(f"[gauth] Client secrets file not found at "
+                      f"{CLIENTSECRETS_LOCATION}")
         return None
     except Exception as e:
-        logging.error(f"[gauth] Error creating credentials for user {user_id}: {e}")
+        logging.error(f"[gauth] Error creating credentials for user {user_id}: {e}",
+                      exc_info=True) # Add exc_info
         return None
 
-# --- New OAuth Flow Functions ---
 
 def get_auth_url(state: str) -> str | None:
     """Generates the Google OAuth 2.0 authorization URL."""
@@ -260,10 +248,12 @@ def get_auth_url(state: str) -> str | None:
         logging.info(f"[gauth] Generated authorization URL with state: {state}")
         return authorization_url
     except FileNotFoundError:
-        logging.error(f"[gauth] Client secrets file not found at {CLIENTSECRETS_LOCATION}")
+        logging.error(f"[gauth] Client secrets file not found at "
+                      f"{CLIENTSECRETS_LOCATION}")
         return None
     except Exception as e:
-        logging.error(f"[gauth] Failed to generate authorization URL: {e}")
+        logging.error(f"[gauth] Failed to generate authorization URL: {e}",
+                      exc_info=True) # Add exc_info
         return None
 
 def exchange_code(state: str, code: str, user_id_hint: str | None = None) -> GoogleCredentials | None:
@@ -297,7 +287,8 @@ def exchange_code(state: str, code: str, user_id_hint: str | None = None) -> Goo
             return None
 
         if not credentials.refresh_token:
-            logging.error(f"[gauth] Failed to obtain refresh token. User might not have granted offline access.")
+            logging.error(f"[gauth] Failed to obtain refresh token. "
+                          f"User might not have granted offline access.")
             # This is a critical failure for long-term access.
             return None # Indicate failure
 
@@ -306,13 +297,15 @@ def exchange_code(state: str, code: str, user_id_hint: str | None = None) -> Goo
         # We can get this by making a call to the userinfo endpoint.
         user_info = get_user_info(credentials)
         if not user_info or 'email' not in user_info:
-            logging.error(f"[gauth] Failed to retrieve user email after exchanging code. Cannot store refresh token.")
+            logging.error(f"[gauth] Failed to retrieve user email after exchanging code. "
+                          f"Cannot store refresh token.")
             # If we have a hint, maybe use that? Risky if hint is wrong.
             if user_id_hint:
-                 logging.warning(f"[gauth] Attempting to use provided user_id_hint '{user_id_hint}' for storage.")
-                 user_id = user_id_hint
+                logging.warning(f"[gauth] Attempting to use provided user_id_hint "
+                                f"'{user_id_hint}' for storage.")
+                user_id = user_id_hint
             else:
-                 return None # Cannot proceed without a user ID
+                return None # Cannot proceed without a user ID
         else:
             user_id = user_info['email']
             logging.info(f"[gauth] Successfully retrieved user email: {user_id}")
@@ -323,15 +316,18 @@ def exchange_code(state: str, code: str, user_id_hint: str | None = None) -> Goo
         # Notify aggregator (using the original state passed in)
         notify_aggregator_success(state)
 
-        logging.info(f"[gauth] Successfully exchanged code, stored refresh token for {user_id}, and notified aggregator.")
+        logging.info(f"[gauth] Successfully exchanged code, stored refresh token for "
+                     f"{user_id}, and notified aggregator.")
         return credentials
 
     except FileNotFoundError:
-        logging.error(f"[gauth] Client secrets file not found at {CLIENTSECRETS_LOCATION}")
+        logging.error(f"[gauth] Client secrets file not found at "
+                      f"{CLIENTSECRETS_LOCATION}")
         return None
     except Exception as e:
         # Includes potential errors during flow.fetch_token (e.g., invalid code, state mismatch)
-        logging.error(f"[gauth] Failed to exchange authorization code: {e}")
+        logging.error(f"[gauth] Failed to exchange authorization code: {e}",
+                      exc_info=True) # Add exc_info
         return None
 
 def get_user_info(credentials: GoogleCredentials) -> dict | None:
@@ -351,16 +347,17 @@ def get_user_info(credentials: GoogleCredentials) -> dict | None:
         logging.debug(f"[gauth] Fetched user info: {user_info}")
         return user_info
     except RefreshError as e:
-        logging.error(f"[gauth] Failed to refresh credentials before fetching user info: {e}")
+        logging.error(f"[gauth] Failed to refresh credentials before fetching user info: {e}",
+                      exc_info=True) # Add exc_info
         return None
     except requests.exceptions.RequestException as e:
-        logging.error(f"[gauth] Failed to fetch user info: {e}")
+        logging.error(f"[gauth] Failed to fetch user info: {e}",
+                      exc_info=True) # Add exc_info
         return None
     except Exception as e:
-        logging.error(f"[gauth] An unexpected error occurred while fetching user info: {e}")
+        logging.error(f"[gauth] An unexpected error occurred while fetching user info: {e}",
+                      exc_info=True) # Add exc_info
         return None
-
-# --- Service Client Creation ---
 
 def get_google_service(service_name: str, version: str, user_id: str):
     """
@@ -376,26 +373,27 @@ def get_google_service(service_name: str, version: str, user_id: str):
     """
     credentials = get_credentials_for_user(user_id)
     if not credentials:
-        logging.error(f"[gauth] Could not get credentials for user {user_id} to build '{service_name}' service.")
+        logging.error(f"[gauth] Could not get credentials for user {user_id} "
+                      f"to build '{service_name}' service.")
         return None
 
     try:
         service = build(service_name, version, credentials=credentials, cache_discovery=False) # Disable discovery cache
-        logging.info(f"[gauth] Successfully built '{service_name}' service client for user {user_id}.")
+        logging.info(f"[gauth] Successfully built '{service_name}' service client "
+                     f"for user {user_id}.")
         return service
     except HttpError as error:
-        logging.error(f"[gauth] An API error occurred building '{service_name}' service for {user_id}: {error}")
+        logging.error(f"[gauth] An API error occurred building '{service_name}' service "
+                      f"for {user_id}: {error}")
         # Check if it's an auth error (e.g., token revoked)
         if error.resp.status in [401, 403]:
-             logging.warning(f"[gauth] Authentication error for {user_id}. Refresh token might be invalid. User may need to re-authenticate.")
+            logging.warning(f"[gauth] Authentication error for {user_id}. Refresh token might be "
+                            f"invalid. User may need to re-authenticate.")
              # Consider deleting the potentially invalid refresh token
              # delete_refresh_token_from_redis(user_id)
         return None
     except Exception as e:
-        logging.error(f"[gauth] An unexpected error occurred building '{service_name}' service for {user_id}: {e}")
+        logging.error(f"[gauth] An unexpected error occurred building '{service_name}' service "
+                      f"for {user_id}: {e}", exc_info=True) # Add exc_info
         return None
-
-
-# Removed get_credentials_dir and _get_credential_filename (using Redis now)
-# Removed get_authenticated_credentials and store_refreshed_credentials (using Redis now)
-# Removed unused functions placeholders as they will be re-added with new logic
+#-#

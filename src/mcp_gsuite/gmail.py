@@ -4,7 +4,7 @@
 from __future__ import annotations
 '''----------------------------'''
 from email.mime.text import MIMEText
-from typing import Tuple
+# from typing import Tuple # Removed unused import
 import logging
 import base64
 ##-##
@@ -16,6 +16,7 @@ from googleapiclient.discovery import build
 ##-##
 
 ## ===== LOCAL ===== ##
+# (No local imports currently)
 ##-##
 
 #-#
@@ -49,21 +50,22 @@ class GmailService():
     def __init__(self, credentials: Credentials):
         # Removed user_id lookup, credentials passed directly
         if not credentials:
-             # Should not happen if tool layer validates, but good check
+            # Should not happen if tool layer validates, but good check
              raise ValueError("Credentials must be provided to GmailService.")
         try:
             self.service = build('gmail', 'v1', credentials=credentials)
         except Exception as e:
             # Catch potential build errors (e.g., invalid credentials structure)
-            logger.error(f"Failed to build Gmail service: {e}", exc_info=True)
+            logger.error(f"Failed to build Gmail service: {e}",
+                         exc_info=True)
             raise RuntimeError(f"Failed to initialize Gmail service: {e}") from e
 
-    def _parse_message(self, txt, parse_body=False) -> dict | None:
+    def _parse_message(self, message_data, parse_body=False) -> dict | None:
         """
         Parse a Gmail message into a structured format.
         
         Args:
-            txt (dict): Raw message from Gmail API
+            message_data (dict): Raw message data from Gmail API
             parse_body (bool): Whether to parse and include the message body (default: False)
         
         Returns:
@@ -71,19 +73,19 @@ class GmailService():
             None: If parsing fails
         """
         try:
-            message_id = txt.get('id')
-            thread_id = txt.get('threadId')
-            payload = txt.get('payload', {})
+            message_id = message_data.get('id')
+            thread_id = message_data.get('threadId')
+            payload = message_data.get('payload', {})
             headers = payload.get('headers', [])
 
             metadata = {
                 'id': message_id,
                 'threadId': thread_id,
-                'historyId': txt.get('historyId'),
-                'internalDate': txt.get('internalDate'),
-                'sizeEstimate': txt.get('sizeEstimate'),
-                'labelIds': txt.get('labelIds', []),
-                'snippet': txt.get('snippet'),
+                'historyId': message_data.get('historyId'),
+                'internalDate': message_data.get('internalDate'),
+                'sizeEstimate': message_data.get('sizeEstimate'),
+                'labelIds': message_data.get('labelIds', []),
+                'snippet': message_data.get('snippet'),
             }
 
             for header in headers:
@@ -122,7 +124,8 @@ class GmailService():
 
         except Exception as e:
             # Keep logging for internal helper, but maybe raise specific error?
-            logging.error(f"Error parsing message structure: {e}", exc_info=True)
+            logging.error(f"Error parsing message structure: {e}",
+                          exc_info=True)
             # For now, return None as the caller (get_email_by_id_with_attachments) will handle it
             return None
 
@@ -165,7 +168,8 @@ class GmailService():
 
         except Exception as e:
             # Keep logging for internal helper
-            logging.error(f"Error extracting body content: {e}", exc_info=True)
+            logging.error(f"Error extracting body content: {e}",
+                          exc_info=True)
             return None # Caller handles None
 
     def query_emails(self, query=None, max_results=100):
@@ -193,29 +197,31 @@ class GmailService():
 
         messages = result.get('messages', [])
         parsed = []
-        errors = [] # Track errors for individual messages
+        # errors = [] # Removed unused variable
 
         # Fetch full message details for each message
         for msg in messages:
             try:
                 # This call can raise HttpError (e.g., if a message was deleted between list and get)
-                txt = self.service.users().messages().get(
+                message_data = self.service.users().messages().get(
                     userId='me',
                     id=msg['id']
                 ).execute()
-                parsed_message = self._parse_message(txt=txt, parse_body=False)
+                parsed_message = self._parse_message(message_data=message_data, parse_body=False)
                 if parsed_message:
                     parsed.append(parsed_message)
                 else:
                     # Log if parsing failed for a specific message
                     logger.warning(f"Failed to parse message ID {msg.get('id')} during query.")
-                    errors.append({"id": msg.get('id'), "error": "Parsing failed"})
+                    # errors.append({"id": msg.get('id'), "error": "Parsing failed"}) # Removed unused variable append
             except HttpError as e:
-                 logger.error(f"HttpError getting message ID {msg.get('id')} during query: {e}", exc_info=True)
-                 errors.append({"id": msg.get('id'), "error": f"HTTP {e.resp.status}: {e.reason}"})
+                 logger.error(f"HttpError getting message ID {msg.get('id')} "
+                              f"during query: {e}", exc_info=True)
+                 # errors.append({"id": msg.get('id'), "error": f"HTTP {e.resp.status}: {e.reason}"}) # Removed unused variable append
             except Exception as e:
-                 logger.error(f"Unexpected error getting message ID {msg.get('id')} during query: {e}", exc_info=True)
-                 errors.append({"id": msg.get('id'), "error": f"Unexpected error: {e}"})
+                 logger.error(f"Unexpected error getting message ID {msg.get('id')} "
+                              f"during query: {e}", exc_info=True)
+                 # errors.append({"id": msg.get('id'), "error": f"Unexpected error: {e}"}) # Removed unused variable append
 
 
         # Return parsed messages, potentially include errors if needed by caller
@@ -231,8 +237,8 @@ class GmailService():
             email_id (str): The Gmail message ID to retrieve
         
         Returns:
-            Tuple[dict, list]: Complete parsed email message including body and list of attachment IDs
-            Tuple[None, list]: If retrieval or parsing fails, returns None for email and empty list for attachment IDs
+            Tuple[dict, dict]: Complete parsed email message including body and dictionary of attachment metadata (key: partId)
+            Tuple[None, dict]: If retrieval or parsing fails, raises EmailNotFoundError or EmailParsingError. Returns empty dict for attachments if parsing fails after retrieval.
         """
         # Removed outer try/except - let HttpError propagate
         # Fetch the complete message by ID - can raise HttpError
@@ -249,7 +255,7 @@ class GmailService():
                 raise
 
         # Parse the message with body included
-        parsed_email = self._parse_message(txt=message, parse_body=True)
+        parsed_email = self._parse_message(message_data=message, parse_body=True)
 
         if parsed_email is None:
             # Raise error if parsing failed
@@ -276,7 +282,8 @@ class GmailService():
                         "size": body.get('size') # Include size if available
                     }
                 else:
-                     logger.warning(f"Skipping attachment part in email {email_id} due to missing ID (partId: {part_id}, attachmentId: {attachment_id})")
+                     logger.warning(f"Skipping attachment part in email {email_id} due to missing ID "
+                                    f"(partId: {part_id}, attachmentId: {attachment_id})")
 
 
         return parsed_email, attachments
@@ -293,7 +300,7 @@ class GmailService():
             
         Returns:
             dict: Draft message data including the draft ID if successful
-            None: If creation fails
+            Raises: HttpError on API issues, ValueError on encoding errors.
         """
         # Removed outer try/except - let HttpError propagate
         # Create the message in MIME format
@@ -308,7 +315,8 @@ class GmailService():
             raw_message = base64.urlsafe_b64encode(mime_message.as_bytes()).decode('utf-8')
         except Exception as encode_error:
             # Handle potential encoding errors
-            logger.error(f"Error encoding draft message: {encode_error}", exc_info=True)
+            logger.error(f"Error encoding draft message: {encode_error}",
+                         exc_info=True)
             raise ValueError("Failed to encode draft message content.") from encode_error
 
         # Create the draft - can raise HttpError
@@ -331,7 +339,7 @@ class GmailService():
             draft_id (str): The ID of the draft to delete
             
         Returns:
-            bool: True if deletion was successful, False otherwise
+            bool: True if deletion was successful. Raises DraftNotFoundError if draft doesn't exist or HttpError for other API issues.
         """
         try:
             # This call can raise HttpError
@@ -360,7 +368,7 @@ class GmailService():
             
         Returns:
             dict: Sent message or draft data if successful
-            None: If operation fails
+            Raises: ValueError if original message data is invalid, HttpError on API issues, ValueError on encoding errors.
         """
         # Removed outer try/except - let HttpError/ValueError propagate
         to_address = original_message.get('from')
@@ -412,7 +420,8 @@ class GmailService():
         try:
             raw_message = base64.urlsafe_b64encode(mime_message.as_bytes()).decode('utf-8')
         except Exception as encode_error:
-            logger.error(f"Error encoding reply message: {encode_error}", exc_info=True)
+            logger.error(f"Error encoding reply message: {encode_error}",
+                         exc_info=True)
             raise ValueError("Failed to encode reply message content.") from encode_error
 
         message_body = {
@@ -446,7 +455,7 @@ class GmailService():
         
         Returns:
             dict: Attachment data including filename and base64-encoded content
-            None: If retrieval fails
+            Raises: AttachmentNotFoundError, PermissionError, HttpError on API issues.
         """
         try:
             # This call can raise HttpError
@@ -460,7 +469,9 @@ class GmailService():
             attachment_data = attachment.get("data")
             if attachment_data is None:
                  # This might indicate an issue even if the API call succeeded
-                 raise AttachmentNotFoundError(f"Attachment with ID '{attachment_id}' found but contained no data.")
+                 raise AttachmentNotFoundError(
+                     f"Attachment with ID '{attachment_id}' found but contained no data."
+                 )
 
             return {
                 "size": attachment.get("size"),
@@ -468,10 +479,14 @@ class GmailService():
             }
         except HttpError as e:
             if e.resp.status == 404:
-                 raise AttachmentNotFoundError(f"Attachment with ID '{attachment_id}' not found in message '{message_id}'.") from e
+                 raise AttachmentNotFoundError(
+                     f"Attachment with ID '{attachment_id}' not found in message '{message_id}'."
+                 ) from e
             # Handle 403 Forbidden?
             elif e.resp.status == 403:
-                 raise PermissionError(f"Permission denied accessing attachment '{attachment_id}' in message '{message_id}'.") from e
+                 raise PermissionError(
+                     f"Permission denied accessing attachment '{attachment_id}' in message '{message_id}'."
+                 ) from e
             else:
                 # Re-raise other HttpErrors
                 raise

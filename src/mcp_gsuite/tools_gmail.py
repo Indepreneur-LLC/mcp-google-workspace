@@ -13,8 +13,8 @@ from googleapiclient.errors import HttpError
 from mcp import (
     EmbeddedResource,
     ToolAnnotations,
-    ImageContent,
     JSONRPCError,
+    ImageContent,
     TextContent
 )
 ##-##
@@ -65,13 +65,15 @@ def decode_base64_data(file_data):
             },
             "query": {
                 "type": "string",
-                "description": """Gmail search query (optional). Examples:
-                    - a $string: Search email body, subject, and sender information for $string
-                    - 'is:unread' for unread emails
-                    - 'from:example@gmail.com' for emails from a specific sender
-                    - 'newer_than:2d' for emails from last 2 days
-                    - 'has:attachment' for emails with attachments
-                    If not provided, returns recent emails without filtering.""",
+                "description": (
+                    "Gmail search query (optional). Examples:\n"
+                    "    - a $string: Search email body, subject, and sender information for $string\n"
+                    "    - 'is:unread' for unread emails\n"
+                    "    - 'from:example@gmail.com' for emails from a specific sender\n"
+                    "    - 'newer_than:2d' for emails from last 2 days\n"
+                    "    - 'has:attachment' for emails with attachments\n"
+                    "If not provided, returns recent emails without filtering."
+                ),
             },
             "max_results": {
                 "type": "integer",
@@ -89,7 +91,11 @@ def decode_base64_data(file_data):
         tags=["gmail", "email", "search", "query"]
     )
 )
-async def query_gmail_emails(oauth_state: str, query: str | None = None, max_results: int = 100) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+async def query_gmail_emails(
+    oauth_state: str,
+    query: str | None = None,
+    max_results: int = 100
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Queries Gmail emails."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -109,11 +115,15 @@ async def query_gmail_emails(oauth_state: str, query: str | None = None, max_res
             data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
         )
     except HttpError as e:
-        logger.error(f"Google API HTTP error in query_gmail_emails for user {GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+        logger.error(f"Google API HTTP error in query_gmail_emails for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in query_gmail_emails for user {GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to query emails for {GLOBAL_USER_ID}. Reason: {e}")
+        logger.error(f"Unexpected error in query_gmail_emails for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to query emails for "
+                                                f"{GLOBAL_USER_ID}. Reason: {e}")
 
 @app.tool(
     name="get_gmail_email",
@@ -149,15 +159,18 @@ async def get_gmail_email(oauth_state: str, email_id: str) -> Sequence[TextConte
         email, attachments = await asyncio.to_thread(gmail_service.get_email_by_id_with_attachments, email_id)
 
         if email is None:
-             # Assuming service layer raises specific error if not found
-             logger.error(f"get_email_by_id_with_attachments returned None for email {email_id}, user {GLOBAL_USER_ID}")
-             raise JSONRPCError(code=-32003, message=f"Email with ID {email_id} not found or could not be retrieved.")
+            # Assuming service layer raises specific error if not found
+            logger.error(f"get_email_by_id_with_attachments returned None for email "
+                         f"{email_id}, user {GLOBAL_USER_ID}")
+            raise JSONRPCError(code=-32003, message=f"Email with ID {email_id} not found or "
+                                                    f"could not be retrieved.")
 
         email["attachments"] = attachments
         return email # Return raw data
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for get_gmail_email (user: {GLOBAL_USER_ID}, email: {email_id}): {auth_error}")
+        logger.warning(f"Authentication required for get_gmail_email "
+                       f"(user: {GLOBAL_USER_ID}, email: {email_id}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -166,11 +179,15 @@ async def get_gmail_email(oauth_state: str, email_id: str) -> Sequence[TextConte
             data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
         )
     except HttpError as e:
-        logger.error(f"Google API HTTP error in get_gmail_email for user {GLOBAL_USER_ID}, email {email_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+        logger.error(f"Google API HTTP error in get_gmail_email for user "
+                     f"{GLOBAL_USER_ID}, email {email_id}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e: # Catch potential specific errors from service layer if added
-        logger.error(f"Unexpected error in get_gmail_email for user {GLOBAL_USER_ID}, email {email_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to get email {email_id} for {GLOBAL_USER_ID}. Reason: {e}")
+        logger.error(f"Unexpected error in get_gmail_email for user "
+                     f"{GLOBAL_USER_ID}, email {email_id}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to get email {email_id} for "
+                                                f"{GLOBAL_USER_ID}. Reason: {e}")
 
 @app.tool(
     name="bulk_get_gmail_emails",
@@ -199,7 +216,10 @@ async def get_gmail_email(oauth_state: str, email_id: str) -> Sequence[TextConte
         tags=["gmail", "email", "get", "read", "bulk"]
     )
 )
-async def bulk_get_gmail_emails(oauth_state: str, email_ids: list[str]) -> Sequence[TextContent | ImageContent | EmbeddedResource]: # Removed user_id param
+async def bulk_get_gmail_emails(
+    oauth_state: str,
+    email_ids: list[str]
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]: # Removed user_id param
     """Retrieves multiple Gmail emails by ID."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -219,7 +239,8 @@ async def bulk_get_gmail_emails(oauth_state: str, email_ids: list[str]) -> Seque
         for i, result in enumerate(email_results):
             email_id = email_ids[i]
             if isinstance(result, Exception):
-                logger.error(f"Error retrieving email {email_id} in bulk operation for user {GLOBAL_USER_ID}: {result}", exc_info=result)
+                logger.error(f"Error retrieving email {email_id} in bulk operation for user "
+                             f"{GLOBAL_USER_ID}: {result}", exc_info=result)
                 # Include error marker in results
                 processed_results.append({"email_id": email_id, "error": str(result)})
             elif result and result[0] is not None: # result is (email, attachments) tuple
@@ -227,13 +248,15 @@ async def bulk_get_gmail_emails(oauth_state: str, email_ids: list[str]) -> Seque
                 email["attachments"] = attachments
                 processed_results.append(email)
             else:
-                logger.warning(f"Failed to retrieve email {email_id} (returned None) in bulk operation for user {GLOBAL_USER_ID}.")
+                logger.warning(f"Failed to retrieve email {email_id} (returned None) in bulk "
+                               f"operation for user {GLOBAL_USER_ID}.")
                 processed_results.append({"email_id": email_id, "error": "Email not found or retrieval failed."})
 
 
         if not processed_results:
-             # This case might be less likely now errors are included
-             raise JSONRPCError(code=-32004, message="Failed to retrieve or process any emails from the provided IDs.")
+            # This case might be less likely now errors are included
+            raise JSONRPCError(code=-32004, message="Failed to retrieve or process any emails "
+                                                    "from the provided IDs.")
 
         return processed_results # Return raw list of results/errors
 
@@ -247,18 +270,23 @@ async def bulk_get_gmail_emails(oauth_state: str, email_ids: list[str]) -> Seque
             data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
         )
     except HttpError as e: # Catch HttpError if it occurs during batch processing (less likely here)
-        logger.error(f"Google API HTTP error during bulk_get_gmail_emails for user {GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+        logger.error(f"Google API HTTP error during bulk_get_gmail_emails for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in bulk_get_gmail_emails for user {GLOBAL_USER_ID}: {e}", exc_info=True)
+        logger.error(f"Unexpected error in bulk_get_gmail_emails for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
         # Return partial results if available, otherwise raise generic error
         if 'processed_results' in locals() and processed_results:
-             logger.warning(f"Returning partial results for bulk_get_gmail_emails due to error: {e}")
-             # Optionally add a top-level error marker to the list
-             processed_results.append({"error": f"Bulk operation failed partially. Reason: {e}"})
-             return processed_results
+            logger.warning(f"Returning partial results for bulk_get_gmail_emails "
+                           f"due to error: {e}")
+            # Optionally add a top-level error marker to the list
+            processed_results.append({"error": f"Bulk operation failed partially. Reason: {e}"})
+            return processed_results
         else:
-            raise JSONRPCError(code=-32000, message=f"Failed bulk email retrieval for {GLOBAL_USER_ID}. Reason: {e}")
+            raise JSONRPCError(code=-32000, message=f"Failed bulk email retrieval for "
+                                                    f"{GLOBAL_USER_ID}. Reason: {e}")
 
 @app.tool(
     name="get_gmail_attachment",
@@ -289,7 +317,8 @@ async def bulk_get_gmail_emails(oauth_state: str, email_ids: list[str]) -> Seque
             },
             "save_to_disk": {
                 "type": "string",
-                "description": "Optional full path to save the attachment to disk. If not provided, the attachment is returned as an embedded resource."
+                "description": "Optional full path to save the attachment to disk. If not provided, "
+                               "the attachment is returned as an embedded resource."
             }
         },
         "required": ["oauth_state", "message_id", "attachment_id", "mime_type", "filename"] # Removed user_id
@@ -300,7 +329,14 @@ async def bulk_get_gmail_emails(oauth_state: str, email_ids: list[str]) -> Seque
         tags=["gmail", "email", "attachment", "get", "download"]
     )
 )
-async def get_gmail_attachment(oauth_state: str, message_id: str, attachment_id: str, mime_type: str, filename: str, save_to_disk: str | None = None) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+async def get_gmail_attachment(
+    oauth_state: str,
+    message_id: str,
+    attachment_id: str,
+    mime_type: str,
+    filename: str,
+    save_to_disk: str | None = None
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Retrieves a Gmail attachment."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -311,13 +347,18 @@ async def get_gmail_attachment(oauth_state: str, message_id: str, attachment_id:
 
         if attachment_data is None:
             # Assuming service layer raises specific error
-            logger.error(f"get_attachment returned None for msg {message_id}, att {attachment_id}, user {GLOBAL_USER_ID}")
-            raise JSONRPCError(code=-32010, message=f"Failed to retrieve attachment {attachment_id} from message {message_id}. It might not exist or an error occurred.")
+            logger.error(f"get_attachment returned None for msg {message_id}, "
+                         f"att {attachment_id}, user {GLOBAL_USER_ID}")
+            raise JSONRPCError(code=-32010, message=f"Failed to retrieve attachment {attachment_id} "
+                                                    f"from message {message_id}. It might not exist "
+                                                    f"or an error occurred.")
 
         file_data = attachment_data.get("data")
         if not file_data:
-             logger.error(f"Attachment {attachment_id} from message {message_id} contained no data for user {GLOBAL_USER_ID}")
-             raise JSONRPCError(code=-32011, message=f"Attachment {attachment_id} from message {message_id} contained no data.")
+            logger.error(f"Attachment {attachment_id} from message {message_id} contained no data "
+                         f"for user {GLOBAL_USER_ID}")
+            raise JSONRPCError(code=-32011, message=f"Attachment {attachment_id} from message "
+                                                    f"{message_id} contained no data.")
 
         attachment_url = f"attachment://gmail/{message_id}/{attachment_id}/{filename}"
 
@@ -333,8 +374,10 @@ async def get_gmail_attachment(oauth_state: str, message_id: str, attachment_id:
 
                 return {"status": "success", "message": f"Attachment saved to disk: {save_to_disk}", "path": save_to_disk}
             except Exception as save_e:
-                 logger.error(f"Error saving attachment {filename} to {save_to_disk} for user {GLOBAL_USER_ID}: {save_e}", exc_info=True)
-                 raise JSONRPCError(code=-32012, message=f"Failed to save attachment {filename} to {save_to_disk}. Reason: {save_e}")
+                logger.error(f"Error saving attachment {filename} to {save_to_disk} "
+                             f"for user {GLOBAL_USER_ID}: {save_e}", exc_info=True)
+                raise JSONRPCError(code=-32012, message=f"Failed to save attachment {filename} "
+                                                        f"to {save_to_disk}. Reason: {save_e}")
         else:
             # Return as embedded resource (this part is already correct)
             return EmbeddedResource(
@@ -347,7 +390,8 @@ async def get_gmail_attachment(oauth_state: str, message_id: str, attachment_id:
             )
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for get_gmail_attachment (user: {GLOBAL_USER_ID}, msg: {message_id}, att: {attachment_id}): {auth_error}")
+        logger.warning(f"Authentication required for get_gmail_attachment "
+                       f"(user: {GLOBAL_USER_ID}, msg: {message_id}, att: {attachment_id}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -358,18 +402,26 @@ async def get_gmail_attachment(oauth_state: str, message_id: str, attachment_id:
     except HttpError as e:
          # Check for 404 specifically
         if e.resp.status == 404:
-             logger.warning(f"Attachment {attachment_id} or message {message_id} not found for user {GLOBAL_USER_ID}: {e}")
-             raise JSONRPCError(code=-32010, message=f"Attachment {attachment_id} or message {message_id} not found.")
+            logger.warning(f"Attachment {attachment_id} or message {message_id} not found "
+                           f"for user {GLOBAL_USER_ID}: {e}")
+            raise JSONRPCError(code=-32010, message=f"Attachment {attachment_id} or message "
+                                                    f"{message_id} not found.")
         else:
-            logger.error(f"Google API HTTP error in get_gmail_attachment for user {GLOBAL_USER_ID}, msg {message_id}, att {attachment_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            logger.error(f"Google API HTTP error in get_gmail_attachment for user "
+                         f"{GLOBAL_USER_ID}, msg {message_id}, att {attachment_id}: {e}", exc_info=True)
+            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                    f"{e.reason}. Details: {e.content.decode()}")
     except base64.binascii.Error as b64_error: # Catch potential decoding errors
-        logger.error(f"Base64 decoding error for attachment {attachment_id}, msg {message_id}, user {GLOBAL_USER_ID}: {b64_error}", exc_info=True)
-        raise JSONRPCError(code=-32013, message=f"Failed to decode attachment data. Reason: {b64_error}")
+        logger.error(f"Base64 decoding error for attachment {attachment_id}, msg {message_id}, "
+                     f"user {GLOBAL_USER_ID}: {b64_error}", exc_info=True)
+        raise JSONRPCError(code=-32013, message=f"Failed to decode attachment data. "
+                                                f"Reason: {b64_error}")
     except Exception as e:
-        logger.error(f"Unexpected error in get_gmail_attachment for user {GLOBAL_USER_ID}, msg {message_id}, att {attachment_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to get attachment {attachment_id} for {GLOBAL_USER_ID}. Reason: {e}")
-###-###
+        logger.error(f"Unexpected error in get_gmail_attachment for user "
+                     f"{GLOBAL_USER_ID}, msg {message_id}, att {attachment_id}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to get attachment {attachment_id} for "
+                                                f"{GLOBAL_USER_ID}. Reason: {e}")
+##-##
 
 ### ----- WRITE/MODIFY TOOLS ----- ###
 @app.tool(
@@ -414,7 +466,13 @@ async def get_gmail_attachment(oauth_state: str, message_id: str, attachment_id:
         tags=["gmail", "email", "draft", "create", "compose"]
     )
 )
-async def create_gmail_draft(oauth_state: str, to: str, subject: str, body: str, cc: list[str] | None = None) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+async def create_gmail_draft(
+    oauth_state: str,
+    to: str,
+    subject: str,
+    body: str,
+    cc: list[str] | None = None
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Creates a new Gmail draft."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -446,11 +504,15 @@ async def create_gmail_draft(oauth_state: str, to: str, subject: str, body: str,
             data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
         )
     except HttpError as e:
-        logger.error(f"Google API HTTP error in create_gmail_draft for user {GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+        logger.error(f"Google API HTTP error in create_gmail_draft for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in create_gmail_draft for user {GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to create draft for {GLOBAL_USER_ID}. Reason: {e}")
+        logger.error(f"Unexpected error in create_gmail_draft for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to create draft for "
+                                                f"{GLOBAL_USER_ID}. Reason: {e}")
 
 @app.tool(
     name="delete_gmail_draft",
@@ -476,7 +538,10 @@ async def create_gmail_draft(oauth_state: str, to: str, subject: str, body: str,
         tags=["gmail", "email", "draft", "delete"]
     )
 )
-async def delete_gmail_draft(oauth_state: str, draft_id: str) -> Sequence[TextContent | ImageContent | EmbeddedResource]: # Removed user_id param
+async def delete_gmail_draft(
+    oauth_state: str,
+    draft_id: str
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]: # Removed user_id param
     """Deletes a Gmail draft by ID."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -490,11 +555,13 @@ async def delete_gmail_draft(oauth_state: str, draft_id: str) -> Sequence[TextCo
              return {"status": "success", "message": f"Successfully deleted draft {draft_id}"}
         else:
              # Assuming service layer raises specific error if deletion fails
-             logger.error(f"delete_draft returned False for draft {draft_id}, user {GLOBAL_USER_ID}")
-             raise JSONRPCError(code=-32006, message=f"Failed to delete draft with ID: {draft_id}. It might not exist or an error occurred.")
+            logger.error(f"delete_draft returned False for draft {draft_id}, user {GLOBAL_USER_ID}")
+            raise JSONRPCError(code=-32006, message=f"Failed to delete draft with ID: {draft_id}. "
+                                                    f"It might not exist or an error occurred.")
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for delete_gmail_draft (user: {GLOBAL_USER_ID}, draft: {draft_id}): {auth_error}")
+        logger.warning(f"Authentication required for delete_gmail_draft "
+                       f"(user: {GLOBAL_USER_ID}, draft: {draft_id}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -505,14 +572,19 @@ async def delete_gmail_draft(oauth_state: str, draft_id: str) -> Sequence[TextCo
     except HttpError as e:
         # Check for 404 specifically, could indicate draft not found
         if e.resp.status == 404:
-             logger.warning(f"Draft {draft_id} not found for deletion by user {GLOBAL_USER_ID}: {e}")
-             raise JSONRPCError(code=-32007, message=f"Draft with ID {draft_id} not found.")
+            logger.warning(f"Draft {draft_id} not found for deletion by user "
+                           f"{GLOBAL_USER_ID}: {e}")
+            raise JSONRPCError(code=-32007, message=f"Draft with ID {draft_id} not found.")
         else:
-             logger.error(f"Google API HTTP error in delete_gmail_draft for user {GLOBAL_USER_ID}, draft {draft_id}: {e}", exc_info=True)
-             raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            logger.error(f"Google API HTTP error in delete_gmail_draft for user "
+                         f"{GLOBAL_USER_ID}, draft {draft_id}: {e}", exc_info=True)
+            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                    f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in delete_gmail_draft for user {GLOBAL_USER_ID}, draft {draft_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to delete draft {draft_id} for {GLOBAL_USER_ID}. Reason: {e}")
+        logger.error(f"Unexpected error in delete_gmail_draft for user "
+                     f"{GLOBAL_USER_ID}, draft {draft_id}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to delete draft {draft_id} for "
+                                                f"{GLOBAL_USER_ID}. Reason: {e}")
 
 @app.tool(
     name="reply_gmail_email",
@@ -556,7 +628,13 @@ async def delete_gmail_draft(oauth_state: str, draft_id: str) -> Sequence[TextCo
         tags=["gmail", "email", "reply", "send", "draft"]
     )
 )
-async def reply_gmail_email(oauth_state: str, original_message_id: str, reply_body: str, send: bool = False, cc: list[str] | None = None) -> Sequence[TextContent | ImageContent | EmbeddedResource]: # Removed user_id param
+async def reply_gmail_email(
+    oauth_state: str,
+    original_message_id: str,
+    reply_body: str,
+    send: bool = False,
+    cc: list[str] | None = None
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]: # Removed user_id param
     """Creates and optionally sends a reply to a Gmail message."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -568,8 +646,10 @@ async def reply_gmail_email(oauth_state: str, original_message_id: str, reply_bo
         original_message = await asyncio.to_thread(gmail_service.get_email_by_id, original_message_id)
         if original_message is None:
             # Assuming service layer raises specific error if not found
-            logger.error(f"get_email_by_id returned None for original message {original_message_id}, user {GLOBAL_USER_ID}")
-            raise JSONRPCError(code=-32008, message=f"Original message with ID {original_message_id} not found or could not be retrieved.")
+            logger.error(f"get_email_by_id returned None for original message "
+                         f"{original_message_id}, user {GLOBAL_USER_ID}")
+            raise JSONRPCError(code=-32008, message=f"Original message with ID {original_message_id} "
+                                                    f"not found or could not be retrieved.")
 
         # Create reply (potentially blocking)
         result = await asyncio.to_thread(
@@ -582,13 +662,16 @@ async def reply_gmail_email(oauth_state: str, original_message_id: str, reply_bo
 
         if result is None:
             # Assuming service layer raises specific error
-            logger.error(f"create_reply returned None for user {GLOBAL_USER_ID}, original msg {original_message_id}")
-            raise JSONRPCError(code=-32009, message=f"Failed to {'send' if send else 'draft'} reply email.")
+            logger.error(f"create_reply returned None for user {GLOBAL_USER_ID}, "
+                         f"original msg {original_message_id}")
+            raise JSONRPCError(code=-32009, message=f"Failed to {'send' if send else 'draft'} "
+                                                    f"reply email.")
 
         return result # Return raw data (draft or sent message object)
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for reply_gmail_email (user: {GLOBAL_USER_ID}, msg: {original_message_id}): {auth_error}")
+        logger.warning(f"Authentication required for reply_gmail_email "
+                       f"(user: {GLOBAL_USER_ID}, msg: {original_message_id}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -599,14 +682,20 @@ async def reply_gmail_email(oauth_state: str, original_message_id: str, reply_bo
     except HttpError as e:
         # Check for 404 on original message fetch?
         if e.resp.status == 404 and "original_message" not in locals(): # Check if error happened during original message fetch
-             logger.warning(f"Original message {original_message_id} not found for reply by user {GLOBAL_USER_ID}: {e}")
-             raise JSONRPCError(code=-32008, message=f"Original message with ID {original_message_id} not found.")
+            logger.warning(f"Original message {original_message_id} not found for reply by user "
+                           f"{GLOBAL_USER_ID}: {e}")
+            raise JSONRPCError(code=-32008, message=f"Original message with ID {original_message_id} "
+                                                    f"not found.")
         else:
-            logger.error(f"Google API HTTP error in reply_gmail_email for user {GLOBAL_USER_ID}, msg {original_message_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            logger.error(f"Google API HTTP error in reply_gmail_email for user "
+                         f"{GLOBAL_USER_ID}, msg {original_message_id}: {e}", exc_info=True)
+            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                    f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in reply_gmail_email for user {GLOBAL_USER_ID}, msg {original_message_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to reply to email {original_message_id} for {GLOBAL_USER_ID}. Reason: {e}")
+        logger.error(f"Unexpected error in reply_gmail_email for user "
+                     f"{GLOBAL_USER_ID}, msg {original_message_id}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to reply to email {original_message_id} "
+                                                f"for {GLOBAL_USER_ID}. Reason: {e}")
 
 @app.tool(
     name="bulk_save_gmail_attachments",
@@ -679,14 +768,20 @@ async def bulk_save_gmail_attachments(oauth_state: str, attachments: list[dict])
             return {"status": "success", "message": f"Attachment saved to: {save_path}", "path": save_path}
 
         except HttpError as e:
-             logger.error(f"Google API HTTP error saving attachment {attachment_id} (msg: {message_id}) to {save_path}: {e}", exc_info=True)
-             return {"status": "error", "message": f"Google API Error saving {attachment_id}: {e.resp.status} {e.reason}", "path": save_path, "input": attachment_info}
+            logger.error(f"Google API HTTP error saving attachment {attachment_id} "
+                         f"(msg: {message_id}) to {save_path}: {e}", exc_info=True)
+            return {"status": "error", "message": f"Google API Error saving {attachment_id}: "
+                                                  f"{e.resp.status} {e.reason}", "path": save_path, "input": attachment_info}
         except base64.binascii.Error as b64_error:
-             logger.error(f"Base64 decoding error saving attachment {attachment_id} (msg: {message_id}) to {save_path}: {b64_error}", exc_info=True)
-             return {"status": "error", "message": f"Decoding error for {attachment_id}: {b64_error}", "path": save_path, "input": attachment_info}
+            logger.error(f"Base64 decoding error saving attachment {attachment_id} "
+                         f"(msg: {message_id}) to {save_path}: {b64_error}", exc_info=True)
+            return {"status": "error", "message": f"Decoding error for {attachment_id}: "
+                                                  f"{b64_error}", "path": save_path, "input": attachment_info}
         except Exception as inner_e:
-            logger.error(f"Error processing attachment {attachment_id} (msg: {message_id}) to {save_path} in bulk save: {inner_e}", exc_info=True)
-            return {"status": "error", "message": f"Failed to save attachment {attachment_id} to {save_path}. Reason: {inner_e}", "path": save_path, "input": attachment_info}
+            logger.error(f"Error processing attachment {attachment_id} (msg: {message_id}) "
+                         f"to {save_path} in bulk save: {inner_e}", exc_info=True)
+            return {"status": "error", "message": f"Failed to save attachment {attachment_id} "
+                                                  f"to {save_path}. Reason: {inner_e}", "path": save_path, "input": attachment_info}
 
 
     try:
@@ -703,7 +798,8 @@ async def bulk_save_gmail_attachments(oauth_state: str, attachments: list[dict])
 
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for bulk_save_gmail_attachments (user: {GLOBAL_USER_ID}): {auth_error}")
+        logger.warning(f"Authentication required for bulk_save_gmail_attachments "
+                       f"(user: {GLOBAL_USER_ID}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -714,9 +810,11 @@ async def bulk_save_gmail_attachments(oauth_state: str, attachments: list[dict])
     # HttpError and other exceptions are handled within save_single_attachment now
     except Exception as e:
         # Catch errors during initial auth or task setup
-        logger.error(f"Unexpected error setting up bulk_save_gmail_attachments for user {GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed bulk attachment save setup for {GLOBAL_USER_ID}. Reason: {e}")
-###-###
+        logger.error(f"Unexpected error setting up bulk_save_gmail_attachments for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed bulk attachment save setup for "
+                                                f"{GLOBAL_USER_ID}. Reason: {e}")
+##-##
 
 ##-##
 

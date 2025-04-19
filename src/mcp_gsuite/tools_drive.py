@@ -1,11 +1,10 @@
 # ===== IMPORTS ===== #
 
 ## ===== STANDARD LIBRARY ===== ##
+from typing import Sequence
 import logging
-import asyncio # Added import
-from typing import Any, Sequence, Optional
+import asyncio
 import base64
-import os
 ##-##
 
 ## ===== THIRD-PARTY ===== ##
@@ -14,15 +13,14 @@ from mcp import (
     ToolAnnotations,
     JSONRPCError,
     TextContent,
-    Tool,
 )
 from googleapiclient.errors import HttpError # Added import
 ##-##
 
 ## ===== LOCAL ===== ##
+from .server import app, GLOBAL_USER_ID
 from . import gauth
 from . import drive
-from .server import app, GLOBAL_USER_ID # Import GLOBAL_USER_ID
 ##-##
 
 #-#
@@ -53,7 +51,8 @@ logger = logging.getLogger(__name__)
             },
             "query": {
                 "type": "string",
-                "description": "Optional query string to filter files (e.g., \"name contains 'report' and mimeType='application/vnd.google-apps.spreadsheet'\"). Uses Google Drive query language.",
+                "description": "Optional query string to filter files (e.g., \"name contains 'report' and "
+                               "mimeType='application/vnd.google-apps.spreadsheet'\"). Uses Google Drive query language.",
             },
             "page_size": {
                 "type": "integer",
@@ -65,7 +64,7 @@ logger = logging.getLogger(__name__)
             "fields": {
                 "type": "string",
                 "description": "Fields to include in the response for each file.",
-                "default": "nextPageToken, files(id, name, mimeType, size, modifiedTime, parents)"
+                "default": "nextPageToken, files(id, name, mimeType, size, modifiedTime, parents)",
             }
         },
         "required": ["oauth_state"] # Removed user_id
@@ -76,7 +75,12 @@ logger = logging.getLogger(__name__)
         tags=["drive", "files", "list", "search"]
     )
 )
-async def list_drive_files(oauth_state: str, query: str | None = None, page_size: int = 100, fields: str = "nextPageToken, files(id, name, mimeType, size, modifiedTime, parents)") -> Sequence[TextContent | EmbeddedResource]: # Removed user_id param
+async def list_drive_files(
+    oauth_state: str,
+    query: str | None = None,
+    page_size: int = 100,
+    fields: str = "nextPageToken, files(id, name, mimeType, size, modifiedTime, parents)"
+) -> Sequence[TextContent | EmbeddedResource]: # Removed user_id param
     """Lists Google Drive files."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -99,11 +103,15 @@ async def list_drive_files(oauth_state: str, query: str | None = None, page_size
             data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
         )
     except HttpError as e:
-        logger.error(f"Google API HTTP error in list_drive_files for user {GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+        logger.error(f"Google API HTTP error in list_drive_files for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in list_drive_files for user {GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to list Drive files for {GLOBAL_USER_ID}. Reason: {e}")
+        logger.error(f"Unexpected error in list_drive_files for user "
+                     f"{GLOBAL_USER_ID}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to list Drive files for "
+                                                f"{GLOBAL_USER_ID}. Reason: {e}")
 
 @app.tool(
     name="get_drive_file_metadata",
@@ -123,7 +131,8 @@ async def list_drive_files(oauth_state: str, query: str | None = None, page_size
             "fields": {
                 "type": "string",
                 "description": "Fields to include in the metadata response.",
-                "default": "id, name, mimeType, size, modifiedTime, createdTime, owners, parents, webViewLink, iconLink"
+                "default": ("id, name, mimeType, size, modifiedTime, createdTime, "
+                            "owners, parents, webViewLink, iconLink"),
             }
         },
         "required": ["oauth_state", "file_id"] # Removed user_id
@@ -134,7 +143,12 @@ async def list_drive_files(oauth_state: str, query: str | None = None, page_size
         tags=["drive", "files", "metadata", "get"]
     )
 )
-async def get_drive_file_metadata(oauth_state: str, file_id: str, fields: str = "id, name, mimeType, size, modifiedTime, createdTime, owners, parents, webViewLink, iconLink") -> Sequence[TextContent | EmbeddedResource]: # Removed user_id param
+async def get_drive_file_metadata(
+    oauth_state: str,
+    file_id: str,
+    fields: str = ("id, name, mimeType, size, modifiedTime, createdTime, "
+                   "owners, parents, webViewLink, iconLink")
+) -> Sequence[TextContent | EmbeddedResource]: # Removed user_id param
     """Gets metadata for a Google Drive file."""
     try:
         # Authenticate and Execute in thread using GLOBAL_USER_ID
@@ -146,7 +160,8 @@ async def get_drive_file_metadata(oauth_state: str, file_id: str, fields: str = 
         return metadata # Return raw data
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for get_drive_file_metadata (user: {GLOBAL_USER_ID}, file: {file_id}): {auth_error}")
+        logger.warning(f"Authentication required for get_drive_file_metadata "
+                       f"(user: {GLOBAL_USER_ID}, file: {file_id}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -156,14 +171,19 @@ async def get_drive_file_metadata(oauth_state: str, file_id: str, fields: str = 
         )
     except HttpError as e:
         if e.resp.status == 404:
-            logger.warning(f"File {file_id} not found for metadata request by user {GLOBAL_USER_ID}: {e}")
+            logger.warning(f"File {file_id} not found for metadata request by user "
+                           f"{GLOBAL_USER_ID}: {e}")
             raise JSONRPCError(code=-32017, message=f"File with ID '{file_id}' not found.")
         else:
-            logger.error(f"Google API HTTP error in get_drive_file_metadata for user {GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            logger.error(f"Google API HTTP error in get_drive_file_metadata for user "
+                         f"{GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
+            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
+                                                    f"{e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in get_drive_file_metadata for user {GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to get metadata for file {file_id} for user {GLOBAL_USER_ID}. Reason: {e}")
+        logger.error(f"Unexpected error in get_drive_file_metadata for user "
+                     f"{GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to get metadata for file {file_id} "
+                                                f"for user {GLOBAL_USER_ID}. Reason: {e}")
 
 @app.tool(
     name="download_drive_file",
@@ -202,9 +222,9 @@ async def download_drive_file(oauth_state: str, file_id: str) -> Sequence[TextCo
         file_content = await asyncio.to_thread(drive.download_file, service, file_id=file_id)
 
         if file_content is None:
-             # Assuming download_file raises specific error if not found (e.g., HttpError 404)
-             logger.error(f"download_file returned None for file {file_id}, user {GLOBAL_USER_ID}")
-             raise JSONRPCError(code=-32017, message=f"File with ID '{file_id}' not found or could not be downloaded.")
+            # Assuming download_file raises specific error if not found (e.g., HttpError 404)
+            logger.error(f"download_file returned None for file {file_id}, user {GLOBAL_USER_ID}")
+            raise JSONRPCError(code=-32017, message=f"File with ID '{file_id}' not found or could not be downloaded.")
 
         # Get metadata (potentially blocking)
         try:
@@ -213,18 +233,20 @@ async def download_drive_file(oauth_state: str, file_id: str) -> Sequence[TextCo
             filename = metadata.get("name", file_id)
             mimetype = metadata.get("mimeType", "application/octet-stream")
         except HttpError as meta_http_error:
-             # Handle 404 specifically for metadata call if it happens after successful download (unlikely)
-             if meta_http_error.resp.status == 404:
-                 logger.warning(f"Metadata not found for downloaded file {file_id} (user: {GLOBAL_USER_ID}): {meta_http_error}. Using defaults.")
-                 filename = file_id
-                 mimetype = "application/octet-stream"
-             else:
+            # Handle 404 specifically for metadata call if it happens after successful download (unlikely)
+            if meta_http_error.resp.status == 404:
+                logger.warning(f"Metadata not found for downloaded file {file_id} "
+                               f"(user: {GLOBAL_USER_ID}): {meta_http_error}. Using defaults.")
+                filename = file_id
+                mimetype = "application/octet-stream"
+            else:
                  # Re-raise other HttpErrors from metadata call
                  raise meta_http_error
         except Exception as meta_e:
-             logger.warning(f"Could not get metadata for downloaded file {file_id} (user: {GLOBAL_USER_ID}): {meta_e}. Using default filename/mimetype.")
-             filename = file_id
-             mimetype = "application/octet-stream"
+            logger.warning(f"Could not get metadata for downloaded file {file_id} "
+                           f"(user: {GLOBAL_USER_ID}): {meta_e}. Using default filename/mimetype.")
+            filename = file_id
+            mimetype = "application/octet-stream"
 
         # Encode content (potentially blocking for large files)
         file_content_b64 = await asyncio.to_thread(lambda: base64.b64encode(file_content).decode('utf-8'))
@@ -236,10 +258,12 @@ async def download_drive_file(oauth_state: str, file_id: str) -> Sequence[TextCo
             "mimeType": mimetype
         }
         # Return the EmbeddedResource directly, not in a list
-        return EmbeddedResource(type="resource", resource=resource_dict, title=filename, description=f"Downloaded content for Google Drive file ID: {file_id}")
+        return EmbeddedResource(type="resource", resource=resource_dict, title=filename,
+                                description=f"Downloaded content for Google Drive file ID: {file_id}")
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for download_drive_file (user: {GLOBAL_USER_ID}, file: {file_id}): {auth_error}")
+        logger.warning(f"Authentication required for download_drive_file "
+                       f"(user: {GLOBAL_USER_ID}, file: {file_id}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -249,22 +273,30 @@ async def download_drive_file(oauth_state: str, file_id: str) -> Sequence[TextCo
         )
     except HttpError as e:
         if e.resp.status == 404:
-            logger.warning(f"File {file_id} not found for download by user {GLOBAL_USER_ID}: {e}")
+            logger.warning(f"File {file_id} not found for download by user "
+                           f"{GLOBAL_USER_ID}: {e}")
             raise JSONRPCError(code=-32017, message=f"File with ID '{file_id}' not found.")
         # Handle 403 for permission issues if needed
         elif e.resp.status == 403:
-             logger.warning(f"Permission denied downloading file {file_id} for user {GLOBAL_USER_ID}: {e}")
-             raise JSONRPCError(code=-32018, message=f"Permission denied to download file '{file_id}'.")
+            logger.warning(f"Permission denied downloading file {file_id} for user "
+                           f"{GLOBAL_USER_ID}: {e}")
+            raise JSONRPCError(code=-32018, message=f"Permission denied to download file '{file_id}'.")
         else:
-            logger.error(f"Google API HTTP error in download_drive_file for user {GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error downloading file: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            logger.error(f"Google API HTTP error in download_drive_file for user "
+                         f"{GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
+            raise JSONRPCError(code=-32002, message=f"Google API Error downloading file: "
+                                                    f"{e.resp.status} {e.reason}. Details: {e.content.decode()}")
     except base64.binascii.Error as b64_error: # Catch potential encoding errors
-        logger.error(f"Base64 encoding error for downloaded file {file_id}, user {GLOBAL_USER_ID}: {b64_error}", exc_info=True)
-        raise JSONRPCError(code=-32013, message=f"Failed to encode downloaded file data. Reason: {b64_error}")
+        logger.error(f"Base64 encoding error for downloaded file {file_id}, "
+                     f"user {GLOBAL_USER_ID}: {b64_error}", exc_info=True)
+        raise JSONRPCError(code=-32013, message=f"Failed to encode downloaded file data. "
+                                                f"Reason: {b64_error}")
     except Exception as e:
-        logger.error(f"Unexpected error in download_drive_file for user {GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to download file {file_id} for user {GLOBAL_USER_ID}. Reason: {e}")
-###-###
+        logger.error(f"Unexpected error in download_drive_file for user "
+                     f"{GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to download file {file_id} for user "
+                                                f"{GLOBAL_USER_ID}. Reason: {e}")
+##-##
 
 ### ----- WRITE/MODIFY TOOLS ----- ###
 @app.tool(
@@ -284,11 +316,11 @@ async def download_drive_file(oauth_state: str, file_id: str) -> Sequence[TextCo
             },
             "mime_type": {
                 "type": "string",
-                "description": "The MIME type of the file (e.g., 'text/plain', 'image/jpeg')."
+                "description": "The MIME type of the file (e.g., 'text/plain', 'image/jpeg').",
             },
             "file_content_b64": {
                 "type": "string",
-                "description": "The base64 encoded content of the file to upload."
+                "description": "The base64 encoded content of the file to upload.",
             },
             "folder_id": {
                 "type": "string",
@@ -303,7 +335,13 @@ async def download_drive_file(oauth_state: str, file_id: str) -> Sequence[TextCo
         tags=["drive", "files", "upload", "create"]
     )
 )
-async def upload_drive_file(oauth_state: str, file_name: str, mime_type: str, file_content_b64: str, folder_id: str | None = None) -> Sequence[TextContent | EmbeddedResource]:
+async def upload_drive_file(
+    oauth_state: str,
+    file_name: str,
+    mime_type: str,
+    file_content_b64: str,
+    folder_id: str | None = None
+) -> Sequence[TextContent | EmbeddedResource]:
     """Uploads a file to Google Drive."""
     try:
         # Authenticate using GLOBAL_USER_ID
@@ -315,8 +353,10 @@ async def upload_drive_file(oauth_state: str, file_name: str, mime_type: str, fi
         try:
             file_content = await asyncio.to_thread(base64.b64decode, file_content_b64)
         except base64.binascii.Error as decode_error:
-            logger.error(f"Failed to decode base64 content for upload '{file_name}' (user: {GLOBAL_USER_ID}): {decode_error}")
-            raise JSONRPCError(code=-32602, message=f"Invalid base64 encoding provided for file '{file_name}'.") from decode_error
+            logger.error(f"Failed to decode base64 content for upload '{file_name}' "
+                         f"(user: {GLOBAL_USER_ID}): {decode_error}")
+            raise JSONRPCError(code=-32602, message=f"Invalid base64 encoding provided for "
+                                                    f"file '{file_name}'.") from decode_error
 
         # Execute upload (blocking)
         upload_response = await asyncio.to_thread(
@@ -332,11 +372,14 @@ async def upload_drive_file(oauth_state: str, file_name: str, mime_type: str, fi
             return upload_response # Return raw response data (usually contains file ID, etc.)
         else:
             # This case is less likely if upload_file raises exceptions on failure
-            logger.error(f"drive.upload_file returned None for file '{file_name}', user {GLOBAL_USER_ID}")
-            raise JSONRPCError(code=-32019, message=f"Failed to upload file '{file_name}'. The operation did not return details.")
+            logger.error(f"drive.upload_file returned None for file '{file_name}', "
+                         f"user {GLOBAL_USER_ID}")
+            raise JSONRPCError(code=-32019, message=f"Failed to upload file '{file_name}'. "
+                                                    f"The operation did not return details.")
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for upload_drive_file (user: {GLOBAL_USER_ID}, file: {file_name}): {auth_error}")
+        logger.warning(f"Authentication required for upload_drive_file "
+                       f"(user: {GLOBAL_USER_ID}, file: {file_name}): {auth_error}")
         # Generate auth URL and raise standard error with data field
         auth_url = await asyncio.to_thread(gauth.get_auth_url, GLOBAL_USER_ID, oauth_state)
         raise JSONRPCError(
@@ -347,20 +390,27 @@ async def upload_drive_file(oauth_state: str, file_name: str, mime_type: str, fi
     except HttpError as e:
         # Check for 404 if folder_id was specified and not found
         if e.resp.status == 404 and folder_id:
-             logger.warning(f"Target folder {folder_id} not found for upload by user {GLOBAL_USER_ID}: {e}")
-             raise JSONRPCError(code=-32020, message=f"Target folder with ID '{folder_id}' not found.")
+            logger.warning(f"Target folder {folder_id} not found for upload by user "
+                           f"{GLOBAL_USER_ID}: {e}")
+            raise JSONRPCError(code=-32020, message=f"Target folder with ID '{folder_id}' not found.")
         # Handle 403 for permission issues if needed
         elif e.resp.status == 403:
-             logger.warning(f"Permission denied uploading file '{file_name}' for user {GLOBAL_USER_ID} (folder: {folder_id}): {e}")
-             raise JSONRPCError(code=-32021, message=f"Permission denied to upload file '{file_name}' (check folder permissions).")
+            logger.warning(f"Permission denied uploading file '{file_name}' for user "
+                           f"{GLOBAL_USER_ID} (folder: {folder_id}): {e}")
+            raise JSONRPCError(code=-32021, message=f"Permission denied to upload file '{file_name}' "
+                                                    f"(check folder permissions).")
         else:
-            logger.error(f"Google API HTTP error in upload_drive_file for user {GLOBAL_USER_ID}, file {file_name}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error uploading file: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            logger.error(f"Google API HTTP error in upload_drive_file for user "
+                         f"{GLOBAL_USER_ID}, file {file_name}: {e}", exc_info=True)
+            raise JSONRPCError(code=-32002, message=f"Google API Error uploading file: "
+                                                    f"{e.resp.status} {e.reason}. Details: {e.content.decode()}")
     # ValueError/JSONRPCError from decoding is already handled above
     except Exception as e:
-        logger.error(f"Unexpected error in upload_drive_file for user {GLOBAL_USER_ID}, file {file_name}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to upload file '{file_name}' for user {GLOBAL_USER_ID}. Reason: {e}")
-###-###
+        logger.error(f"Unexpected error in upload_drive_file for user "
+                     f"{GLOBAL_USER_ID}, file {file_name}: {e}", exc_info=True)
+        raise JSONRPCError(code=-32000, message=f"Failed to upload file '{file_name}' for user "
+                                                f"{GLOBAL_USER_ID}. Reason: {e}")
+##-##
 
 ##-##
 
