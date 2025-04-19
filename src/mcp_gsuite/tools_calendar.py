@@ -4,6 +4,7 @@
 from collections.abc import Sequence
 import logging
 import asyncio
+import json
 ##-##
 
 ## ===== THIRD-PARTY ===== ##
@@ -68,7 +69,8 @@ async def list_calendars(oauth_state: str) -> Sequence[TextContent | ImageConten
         credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, GLOBAL_USER_ID, oauth_state)
         calendar_service = calendar.CalendarService(credentials=credentials)
         calendars = await asyncio.to_thread(calendar_service.list_calendars)
-        return calendars # Return raw data
+        # Wrap the list of calendar dicts in TextContent after JSON serialization
+        return [TextContent(type="text", text=json.dumps(calendars))]
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
         logger.warning(f"Authentication required for list_calendars (user: {GLOBAL_USER_ID}): {auth_error}")
@@ -82,13 +84,13 @@ async def list_calendars(oauth_state: str) -> Sequence[TextContent | ImageConten
     except HttpError as e:
         logger.error(f"Google API HTTP error in list_calendars for user "
                      f"{GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
-                                                f"{e.reason}. Details: {e.content.decode()}")
+        error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
     except Exception as e:
         logger.error(f"Unexpected error in list_calendars for user "
                      f"{GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to list calendars for "
-                                                f"{GLOBAL_USER_ID}. Reason: {e}")
+        error_message = f"Failed to list calendars for {GLOBAL_USER_ID}. Reason: {e}"
+        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 
 @app.tool(
     name="get_calendar_events",
@@ -159,7 +161,8 @@ async def get_calendar_events(
             show_deleted=show_deleted,
             calendar_id=calendar_id,
         )
-        return events # Return raw data
+        # Wrap the list of event dicts in TextContent after JSON serialization
+        return [TextContent(type="text", text=json.dumps(events))]
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
         logger.warning(f"Authentication required for get_calendar_events "
@@ -175,17 +178,18 @@ async def get_calendar_events(
         # Check for 404 specifically, could indicate calendar not found
         if e.resp.status == 404:
             logger.warning(f"Calendar {calendar_id} not found for user {GLOBAL_USER_ID}: {e}")
-            raise JSONRPCError(code=-32014, message=f"Calendar with ID '{calendar_id}' not found.")
+            error_message = f"Calendar with ID '{calendar_id}' not found."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
         else:
             logger.error(f"Google API HTTP error in get_calendar_events for user "
                          f"{GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
-                                                    f"{e.reason}. Details: {e.content.decode()}")
+            error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
     except Exception as e:
         logger.error(f"Unexpected error in get_calendar_events for user "
                      f"{GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to get events for calendar {calendar_id} "
-                                                f"for user {GLOBAL_USER_ID}. Reason: {e}")
+        error_message = f"Failed to get events for calendar {calendar_id} for user {GLOBAL_USER_ID}. Reason: {e}"
+        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 ##-##
 
 ### ----- WRITE/MODIFY TOOLS ----- ###
@@ -281,7 +285,8 @@ async def create_calendar_event(
             calendar_id=calendar_id,
         )
         # Assuming create_event returns the created event object or raises error
-        return event # Return raw data
+        # Wrap the event dict in TextContent after JSON serialization
+        return [TextContent(type="text", text=json.dumps(event))]
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
         logger.warning(f"Authentication required for create_calendar_event "
@@ -298,12 +303,13 @@ async def create_calendar_event(
         if e.resp.status == 404:
             logger.warning(f"Calendar {calendar_id} not found for event creation by user "
                            f"{GLOBAL_USER_ID}: {e}")
-            raise JSONRPCError(code=-32014, message=f"Calendar with ID '{calendar_id}' not found.")
+            error_message = f"Calendar with ID '{calendar_id}' not found."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
         else:
             logger.error(f"Google API HTTP error in create_calendar_event for user "
                          f"{GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
-                                                    f"{e.reason}. Details: {e.content.decode()}")
+            error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
     except ValueError as ve: # Catch potential validation errors from service layer
         logger.warning(f"Validation error creating event for user {GLOBAL_USER_ID}, "
                        f"calendar {calendar_id}: {ve}")
@@ -311,8 +317,8 @@ async def create_calendar_event(
     except Exception as e:
         logger.error(f"Unexpected error in create_calendar_event for user "
                      f"{GLOBAL_USER_ID}, calendar {calendar_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to create event in calendar {calendar_id} "
-                                                f"for user {GLOBAL_USER_ID}. Reason: {e}")
+        error_message = f"Failed to create event in calendar {calendar_id} for user {GLOBAL_USER_ID}. Reason: {e}"
+        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 
 @app.tool(
     name="delete_calendar_event",
@@ -368,15 +374,15 @@ async def delete_calendar_event(
         )
 
         if success:
-            return {"status": "success", "message": f"Event {event_id} successfully deleted from calendar {calendar_id}"}
+            status_dict = {"status": "success", "message": f"Event {event_id} successfully deleted from calendar {calendar_id}"}
+            return [TextContent(type="text", text=json.dumps(status_dict))]
         else:
             # Assuming service layer raises specific error if deletion fails (e.g., 404)
             # This path might not be reached if HttpError is caught below
             logger.error(f"delete_event returned False for event {event_id}, "
                          f"calendar {calendar_id}, user {GLOBAL_USER_ID}")
-            raise JSONRPCError(code=-32015, message=f"Failed to delete event {event_id} from "
-                                                    f"calendar {calendar_id}. It might not exist "
-                                                    f"or an error occurred.")
+            error_message = f"Failed to delete event {event_id} from calendar {calendar_id}. It might not exist or an error occurred."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
         logger.warning(f"Authentication required for delete_calendar_event "
@@ -394,18 +400,18 @@ async def delete_calendar_event(
             logger.warning(f"Event {event_id} not found or already gone in calendar "
                            f"{calendar_id} for user {GLOBAL_USER_ID}: {e}")
             # Consider returning success or specific code? For now, raise specific error.
-            raise JSONRPCError(code=-32016, message=f"Event with ID {event_id} not found or "
-                                                    f"already deleted in calendar '{calendar_id}'.")
+            error_message = f"Event with ID {event_id} not found or already deleted in calendar '{calendar_id}'."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
         else:
             logger.error(f"Google API HTTP error in delete_calendar_event for user "
                          f"{GLOBAL_USER_ID}, calendar {calendar_id}, event {event_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
-                                                    f"{e.reason}. Details: {e.content.decode()}")
+            error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
     except Exception as e:
         logger.error(f"Unexpected error in delete_calendar_event for user "
                      f"{GLOBAL_USER_ID}, calendar {calendar_id}, event {event_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to delete event {event_id} from "
-                                                f"calendar {calendar_id} for user {GLOBAL_USER_ID}. Reason: {e}")
+        error_message = f"Failed to delete event {event_id} from calendar {calendar_id} for user {GLOBAL_USER_ID}. Reason: {e}"
+        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 ##-##
 
 ##-##

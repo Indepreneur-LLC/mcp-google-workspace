@@ -2,67 +2,46 @@
 
 ## ===== STANDARD LIBRARY ===== ##
 from __future__ import annotations
-import logging
-# import traceback # Removed unused import
-from dotenv import load_dotenv
-import sys
 import argparse
-import json
 import asyncio
+import logging
+import sys
 ##-##
 
 ## ===== THIRD PARTY ===== ##
+from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.types import (
-    Tool,
+    ResourceInfo,
     TextContent,
-    ImageContent,
-    EmbeddedResource,
-    Prompt,
     PromptInfo,
     Resource,
-    ResourceInfo,
+    Prompt
 )
 ##-##
 
 ## ===== LOCAL ===== ##
 from . import gauth
-from . import tools_gmail
-from . import tools_calendar
-from . import tools_drive
 ##-##
 
 #-#
 
 # ===== GLOBALS ===== #
-
-## ===== CONFIGURATION ===== ##
-load_dotenv() # Load environment variables from .env file
-##-##
-
-## ===== LOGGING ===== ##
+load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mcp-gsuite")
-##-##
 
-## ===== STATE ===== ##
 GLOBAL_USER_ID: str | None = None # Global variable to store the user ID for this instance
-##-##
 
-#-#
-
-# ===== CLASSES ===== #
-# (No classes defined in this file currently)
+app = Server("mcp-gsuite") # Initialize MCP Server
 #-#
 
 # ===== FUNCTIONS ===== #
+# NOTE: 
+    # Tool registration (@app.tool) is handled within tools_*.py files.
+    # Tool listing (@app.list_tools) is handled automatically by MCP.
+    # Tool calling (@app.call_tool) is handled automatically by MCP.
 
-## ===== MCP HANDLERS ===== ##
-app = Server("mcp-gsuite") # Initialize MCP Server
-
-# Note: Tool registration (@app.tool) is handled within tools_*.py files.
-# Note: Tool listing (@app.list_tools) is handled automatically by MCP.
-# Note: Tool calling (@app.call_tool) is handled automatically by MCP.
 ## ===== MCP PROMPTS ===== ##
 # Define available prompts (can be loaded from YAML later)
 AVAILABLE_PROMPTS = {
@@ -70,20 +49,36 @@ AVAILABLE_PROMPTS = {
         id="onboarding",
         title="GSuite Onboarding",
         description="Initial prompt to guide users on connecting their GSuite account.",
-        template=(
-            "Welcome to the GSuite MCP! To get started, I need access to your Google Account. "
-            "Please tell me your Google email address so I can check if I already have "
-            "credentials stored."
-        )
+        messages=[
+            {
+                "role": "assistant",
+                "content": TextContent(
+                    type="text",
+                    text=(
+                        "Welcome to the GSuite MCP! To get started, I need access to your Google Account. "
+                        "Please tell me your Google email address so I can check if I already have "
+                        "credentials stored."
+                    )
+                )
+            }
+        ]
     ),
     "check_calendar": Prompt(
         id="check_calendar",
         title="Check Calendar Events",
         description="Prompt for checking upcoming calendar events.",
-        template=(
-            "Sure, I can check your calendar. For which email address should I check? "
-            "And for what time range (e.g., 'today', 'next 3 days', or specific dates)?"
-        )
+        messages=[
+            {
+                "role": "assistant",
+                "content": TextContent(
+                    type="text",
+                    text=(
+                        "Sure, I can check your calendar. For which email address should I check? "
+                        "And for what time range (e.g., 'today', 'next 3 days', or specific dates)?"
+                    )
+                )
+            }
+        ]
     )
 }
 
@@ -99,7 +94,6 @@ async def list_prompts() -> list[PromptInfo]:
 async def get_prompt(id: str) -> Prompt | None:
     """Gets a specific prompt by ID."""
     return AVAILABLE_PROMPTS.get(id)
-
 ##-##
 
 ## ===== MCP RESOURCES ===== ##
@@ -116,9 +110,6 @@ async def read_resource(uri: str, user_id: str | None = None, oauth_state: str |
     logger.info(f"read_resource called for URI: {uri}, user: {user_id}")
     # TODO: Implement actual resource reading
     return None
-
-
-
 ##-##
 
 ## ===== MAIN EXECUTION ===== ##
@@ -150,17 +141,17 @@ async def main():
         # Check if the provided GLOBAL_USER_ID matches one of the configured accounts (optional validation)
         if GLOBAL_USER_ID not in [acc.email for acc in accounts]:
             logger.warning(f"Provided user_id '{GLOBAL_USER_ID}' not found in "
-                           f"configured accounts file.")
+                            f"configured accounts file.")
         else:
             logger.info(f"Provided user_id '{GLOBAL_USER_ID}' matches a "
                         f"configured account.")
         # Note: No credential check here anymore. Credential checks happen per-tool-call.
     except FileNotFoundError:
         logger.warning(f"Accounts configuration file ({gauth.get_accounts_file()}) "
-                       f"not found. Cannot verify user_id against configuration.")
+                        f"not found. Cannot verify user_id against configuration.")
     except Exception as e:
         logger.error(f"Error reading accounts configuration on startup: {e}",
-                     exc_info=True) # Add exc_info
+                    exc_info=True) # Add exc_info
     from mcp.server.stdio import stdio_server
 
     async with stdio_server() as (read_stream, write_stream):
@@ -172,7 +163,9 @@ async def main():
 
 ##-##
 
-
 #-#
+
+# ===== ENTRY POINT ===== #
 if __name__ == "__main__":
     asyncio.run(main())
+#-#

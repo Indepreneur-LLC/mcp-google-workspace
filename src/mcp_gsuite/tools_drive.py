@@ -5,6 +5,7 @@ from typing import Sequence
 import logging
 import asyncio
 import base64
+import json
 ##-##
 
 ## ===== THIRD-PARTY ===== ##
@@ -91,7 +92,8 @@ async def list_drive_files(
         service = drive.get_drive_service(credentials)
         files = await asyncio.to_thread(drive.list_files, service, page_size=page_size, query=query, fields=fields)
         # Assuming list_files returns the file list object or raises error
-        return files # Return raw data
+        # Wrap the file list dict in TextContent after JSON serialization
+        return [TextContent(type="text", text=json.dumps(files))]
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
         logger.warning(f"Authentication required for list_drive_files (user: {GLOBAL_USER_ID}): {auth_error}")
@@ -105,13 +107,13 @@ async def list_drive_files(
     except HttpError as e:
         logger.error(f"Google API HTTP error in list_drive_files for user "
                      f"{GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
-                                                f"{e.reason}. Details: {e.content.decode()}")
+        error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
     except Exception as e:
         logger.error(f"Unexpected error in list_drive_files for user "
                      f"{GLOBAL_USER_ID}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to list Drive files for "
-                                                f"{GLOBAL_USER_ID}. Reason: {e}")
+        error_message = f"Failed to list Drive files for {GLOBAL_USER_ID}. Reason: {e}"
+        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 
 @app.tool(
     name="get_drive_file_metadata",
@@ -157,7 +159,8 @@ async def get_drive_file_metadata(
         service = drive.get_drive_service(credentials)
         metadata = await asyncio.to_thread(drive.get_file_metadata, service, file_id=file_id, fields=fields)
         # Assuming get_file_metadata returns the metadata object or raises error
-        return metadata # Return raw data
+        # Wrap the metadata dict in TextContent after JSON serialization
+        return [TextContent(type="text", text=json.dumps(metadata))]
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
         logger.warning(f"Authentication required for get_drive_file_metadata "
@@ -173,17 +176,18 @@ async def get_drive_file_metadata(
         if e.resp.status == 404:
             logger.warning(f"File {file_id} not found for metadata request by user "
                            f"{GLOBAL_USER_ID}: {e}")
-            raise JSONRPCError(code=-32017, message=f"File with ID '{file_id}' not found.")
+            error_message = f"File with ID '{file_id}' not found."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
         else:
             logger.error(f"Google API HTTP error in get_drive_file_metadata for user "
                          f"{GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error: {e.resp.status} "
-                                                    f"{e.reason}. Details: {e.content.decode()}")
+            error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
     except Exception as e:
         logger.error(f"Unexpected error in get_drive_file_metadata for user "
                      f"{GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to get metadata for file {file_id} "
-                                                f"for user {GLOBAL_USER_ID}. Reason: {e}")
+        error_message = f"Failed to get metadata for file {file_id} for user {GLOBAL_USER_ID}. Reason: {e}"
+        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 
 @app.tool(
     name="download_drive_file",
@@ -224,7 +228,8 @@ async def download_drive_file(oauth_state: str, file_id: str) -> Sequence[TextCo
         if file_content is None:
             # Assuming download_file raises specific error if not found (e.g., HttpError 404)
             logger.error(f"download_file returned None for file {file_id}, user {GLOBAL_USER_ID}")
-            raise JSONRPCError(code=-32017, message=f"File with ID '{file_id}' not found or could not be downloaded.")
+            error_message = f"File with ID '{file_id}' not found or could not be downloaded."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 
         # Get metadata (potentially blocking)
         try:
@@ -275,17 +280,19 @@ async def download_drive_file(oauth_state: str, file_id: str) -> Sequence[TextCo
         if e.resp.status == 404:
             logger.warning(f"File {file_id} not found for download by user "
                            f"{GLOBAL_USER_ID}: {e}")
-            raise JSONRPCError(code=-32017, message=f"File with ID '{file_id}' not found.")
+            error_message = f"File with ID '{file_id}' not found."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
         # Handle 403 for permission issues if needed
         elif e.resp.status == 403:
             logger.warning(f"Permission denied downloading file {file_id} for user "
                            f"{GLOBAL_USER_ID}: {e}")
-            raise JSONRPCError(code=-32018, message=f"Permission denied to download file '{file_id}'.")
+            error_message = f"Permission denied to download file '{file_id}'."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
         else:
             logger.error(f"Google API HTTP error in download_drive_file for user "
                          f"{GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error downloading file: "
-                                                    f"{e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            error_message = f"Google API Error downloading file: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
     except base64.binascii.Error as b64_error: # Catch potential encoding errors
         logger.error(f"Base64 encoding error for downloaded file {file_id}, "
                      f"user {GLOBAL_USER_ID}: {b64_error}", exc_info=True)
@@ -294,8 +301,8 @@ async def download_drive_file(oauth_state: str, file_id: str) -> Sequence[TextCo
     except Exception as e:
         logger.error(f"Unexpected error in download_drive_file for user "
                      f"{GLOBAL_USER_ID}, file {file_id}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to download file {file_id} for user "
-                                                f"{GLOBAL_USER_ID}. Reason: {e}")
+        error_message = f"Failed to download file {file_id} for user {GLOBAL_USER_ID}. Reason: {e}"
+        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 ##-##
 
 ### ----- WRITE/MODIFY TOOLS ----- ###
@@ -369,13 +376,14 @@ async def upload_drive_file(
         )
 
         if upload_response:
-            return upload_response # Return raw response data (usually contains file ID, etc.)
+            # Wrap the upload response dict in TextContent after JSON serialization
+            return [TextContent(type="text", text=json.dumps(upload_response))]
         else:
             # This case is less likely if upload_file raises exceptions on failure
             logger.error(f"drive.upload_file returned None for file '{file_name}', "
                          f"user {GLOBAL_USER_ID}")
-            raise JSONRPCError(code=-32019, message=f"Failed to upload file '{file_name}'. "
-                                                    f"The operation did not return details.")
+            error_message = f"Failed to upload file '{file_name}'. The operation did not return details."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 
     except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
         logger.warning(f"Authentication required for upload_drive_file "
@@ -392,24 +400,25 @@ async def upload_drive_file(
         if e.resp.status == 404 and folder_id:
             logger.warning(f"Target folder {folder_id} not found for upload by user "
                            f"{GLOBAL_USER_ID}: {e}")
-            raise JSONRPCError(code=-32020, message=f"Target folder with ID '{folder_id}' not found.")
+            error_message = f"Target folder with ID '{folder_id}' not found."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
         # Handle 403 for permission issues if needed
         elif e.resp.status == 403:
             logger.warning(f"Permission denied uploading file '{file_name}' for user "
                            f"{GLOBAL_USER_ID} (folder: {folder_id}): {e}")
-            raise JSONRPCError(code=-32021, message=f"Permission denied to upload file '{file_name}' "
-                                                    f"(check folder permissions).")
+            error_message = f"Permission denied to upload file '{file_name}' (check folder permissions)."
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
         else:
             logger.error(f"Google API HTTP error in upload_drive_file for user "
                          f"{GLOBAL_USER_ID}, file {file_name}: {e}", exc_info=True)
-            raise JSONRPCError(code=-32002, message=f"Google API Error uploading file: "
-                                                    f"{e.resp.status} {e.reason}. Details: {e.content.decode()}")
+            error_message = f"Google API Error uploading file: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
     # ValueError/JSONRPCError from decoding is already handled above
     except Exception as e:
         logger.error(f"Unexpected error in upload_drive_file for user "
                      f"{GLOBAL_USER_ID}, file {file_name}: {e}", exc_info=True)
-        raise JSONRPCError(code=-32000, message=f"Failed to upload file '{file_name}' for user "
-                                                f"{GLOBAL_USER_ID}. Reason: {e}")
+        error_message = f"Failed to upload file '{file_name}' for user {GLOBAL_USER_ID}. Reason: {e}"
+        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
 ##-##
 
 ##-##

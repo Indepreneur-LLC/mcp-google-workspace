@@ -6,19 +6,20 @@ startCommand:
     # JSON Schema defining the configuration options for the MCP.
     type: object
     required:
+      - userId
       - gauthFile
-      - accountsFile
+      - accountsFile # Keep as required for setup, even if not direct CLI arg
     properties:
+      userId:
+        type: string
+        description: The primary user ID (email) this server instance will handle.
       gauthFile:
         type: string
-        description: Path to the OAuth2 client configuration file.
+        description: Path to the OAuth2 client configuration file (e.g., /app/config/.gauth.json).
       accountsFile:
         type: string
-        description: Path to the Google accounts configuration file.
-      credentialsDir:
-        type: string
-        description: Directory where OAuth credentials are stored.
+        description: Path to the Google accounts configuration file (e.g., /app/config/.accounts.json).
   commandFunction:
     # A function that produces the CLI command to start the MCP on stdio.
     |-
-    (config) => ({command: 'uv', args: ['run', 'mcp-gsuite', '--gauth-file', config.gauthFile, '--accounts-file', config.accountsFile, '--credentials-dir', config.credentialsDir]})
+    (config) => ({command: 'uv', args: ['run', 'mcp-gsuite', '--user-id', config.userId]})
