@@ -14,3 +14,6 @@ oauth2creds.json
 .accounts.json
 .oauth2.*.json
 credentials/
+.pytest_cache/
+config/
+dev/
