@@ -23,11 +23,13 @@ import redis
 ##-##
 
 ## ===== LOCAL ===== ##
+from skp_redis import redis_client as r
 ##-##
 
 #-#
 
 # ===== GLOBALS ===== #
+REDIS_CHANNEL = "gsuite_auth_success"
 
 ## ===== EXCEPTIONS ===== ##
 class AuthenticationError(Exception):
@@ -57,27 +59,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/drive"  # Added full Drive scope
 ]
-
-REDIS_HOST = os.environ.get("REDIS_MASTER_HOST", "redis-master")
-REDIS_PORT = 6379
-REDIS_CHANNEL = "gsuite_auth_success"
 ##-##
-
-## ===== CLIENTS ===== ##
-try:
-    redis_pubsub_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-    redis_pubsub_client.ping()
-    logging.info(f"[gauth] Connected to Redis for Pub/Sub at {REDIS_HOST}:{REDIS_PORT}")
-except redis.exceptions.ConnectionError as e:
-    logging.error(f"[gauth] FATAL: Could not connect to Redis for Pub/Sub at "
-                  f"{REDIS_HOST}:{REDIS_PORT}. Notifications will fail. Error: {e}")
-    redis_pubsub_client = None
-
-# --- Redis Client for Credential Storage ---
-_redis_cred_client = None
-##-##
-
-#-#
 
 # ===== CLASSES ===== #
 
@@ -96,7 +78,7 @@ class AccountInfo(BaseModel):
 # ===== FUNCTIONS ===== #
 def notify_aggregator_success(state: str):
     """Publishes the validated state to the Redis channel."""
-    if not redis_pubsub_client:
+    if not r:
         logging.error(f"[gauth] Cannot notify aggregator: Redis client not connected.")
         return
     if not state:
@@ -104,7 +86,7 @@ def notify_aggregator_success(state: str):
         return
     try:
         message = json.dumps({"status": "success", "state": state})
-        redis_pubsub_client.publish(REDIS_CHANNEL, message)
+        r.publish(REDIS_CHANNEL, message)
         logging.info(f"[gauth] Published state '{state}' to Redis channel '{REDIS_CHANNEL}'.")
     except Exception as e:
         logging.error(f"[gauth] Failed to publish state '{state}' to Redis channel '{REDIS_CHANNEL}': {e}")
@@ -114,7 +96,7 @@ def get_accounts_file() -> str:
     parser.add_argument(
         "--accounts-file",
         type=str,
-        default="/app/config/.accounts.json",
+        default="/app/src/config/.accounts.json",
         help="Path to accounts configuration file",
     )
     args, _ = parser.parse_known_args()
@@ -127,35 +109,19 @@ def get_account_info() -> list[AccountInfo]:
         accounts = data.get("accounts", [])
         return [AccountInfo.model_validate(acc) for acc in accounts]
 
-def _get_redis_client():
-    """Initializes and returns the Redis client for credential storage."""
-    global _redis_cred_client
-    if _redis_cred_client is None:
-        try:
-            _redis_cred_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-            _redis_cred_client.ping()
-            logging.info(f"[gauth] Connected to Redis for Credential Storage at "
-                         f"{REDIS_HOST}:{REDIS_PORT}")
-        except redis.exceptions.ConnectionError as e:
-            logging.error(f"[gauth] FATAL: Could not connect to Redis for Credential Storage at "
-                          f"{REDIS_HOST}:{REDIS_PORT}. Error: {e}")
-            _redis_cred_client = None # Ensure it stays None if connection fails
-    return _redis_cred_client
-
 def _get_redis_key_for_token(user_id: str) -> str:
     """Generates the Redis key for storing a user's refresh token."""
     return f"gsuite:refresh_token:{user_id}"
 
 def store_refresh_token_in_redis(user_id: str, refresh_token: str):
     """Stores the user's refresh token securely in Redis."""
-    redis_client = _get_redis_client()
-    if not redis_client:
+    if not r:
         logging.error(f"[gauth] Cannot store refresh token for {user_id}: "
                       f"Redis client not connected.")
         return
     try:
         key = _get_redis_key_for_token(user_id)
-        redis_client.set(key, refresh_token)
+        r.set(key, refresh_token)
         logging.info(f"[gauth] Stored refresh token for user {user_id} in Redis.")
     except Exception as e:
         logging.error(f"[gauth] Failed to store refresh token for user {user_id} "
@@ -163,14 +129,13 @@ def store_refresh_token_in_redis(user_id: str, refresh_token: str):
 
 def _get_refresh_token_from_redis(user_id: str) -> str | None:
     """Retrieves the user's refresh token from Redis."""
-    redis_client = _get_redis_client()
-    if not redis_client:
+    if not r:
         logging.error(f"[gauth] Cannot retrieve refresh token for {user_id}: "
                       f"Redis client not connected.")
         return None
     try:
         key = _get_redis_key_for_token(user_id)
-        token = redis_client.get(key)
+        token = r.get(key)
         if token:
             logging.debug(f"[gauth] Retrieved refresh token for user {user_id} from Redis.")
             return token

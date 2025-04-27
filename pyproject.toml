@@ -1,5 +1,5 @@
 [project]
-name = "mcp-gsuite"
+name = "mcp-google-workspace"
 version = "0.4.0"
 description = "MCP Server to connect to Google G-Suite"
 readme = "README.md"
@@ -9,17 +9,18 @@ dependencies = [
  "google-api-python-client>=2.154.0",
  "httplib2>=0.22.0",
  "mcp>=1.3.0",
- "google-auth-oauthlib>=1.0.0", # Added for new auth flow
- "google-auth-library-python>=2.0.0", # Added for core auth functionality
+ "google-auth-oauthlib>=1.0.0",
+ "google-auth>=2.0.0",
  "python-dotenv>=1.0.1",
  "pytz>=2024.2",
  "requests>=2.32.3",
- "redis>=5.0"
+ "redis>=5.0",
+ "redisvl>=0.1"
 ]
 
 [[project.authors]]
-name = "Markus Pfundstein"
-email = "markus@life-electronic.nl"
+name = "SOMEKIDPUNK"
+email = "circa@indepreneur.io"
 
 [build-system]
 requires = [ "hatchling",]
@@ -28,8 +29,12 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pyright>=1.1.389",
-    "pytest>=8.0", # Added pytest for running tests
+    "pytest>=8.0"
 ]
 
 [project.scripts]
-mcp-gsuite = "mcp_gsuite:main"
+mcp-google-workspace = "mcp_google_workspace:main"
+
+[tool.hatch.build.targets.wheel]
+# Explicitly tell Hatch where to find the package source
+packages = ["src/mcp_google_workspace"]
