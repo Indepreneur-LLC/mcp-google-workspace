@@ -13,14 +13,13 @@ import os
 from googleapiclient.errors import HttpError
 from mcp.types import (
     EmbeddedResource,
-    JSONRPCError,
     ImageContent,
     TextContent
 )
 ##-##
 
 ## ===== LOCAL ===== ##
-from . import gmail
+# from . import gmail # Removed, service obtained via gauth
 from . import gauth
 ##-##
 
@@ -49,187 +48,186 @@ def decode_base64_data(file_data):
 
 ### ----- READ/QUERY TOOLS ----- ###
 async def query_gmail_emails(
-    oauth_state: str,
+    # oauth_state: str, # Removed
     user_id: str,
     query: str | None = None,
     max_results: int = 100
 ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Queries Gmail emails."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        gmail_service = gmail.GmailService(credentials=credentials)
-        emails = await asyncio.to_thread(gmail_service.query_emails, query=query, max_results=max_results)
-        # Wrap the list of email dicts in TextContent after JSON serialization
-        return [TextContent(type="text", text=json.dumps(emails))]
+        if not user_id: raise ValueError("User ID not provided.")
+        # credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state) # Removed
+        # gmail_service = gmail.GmailService(credentials=credentials) # Removed
+        gmail_service = await asyncio.to_thread(gauth.get_google_service, 'gmail', 'v1', user_id)
+        if gmail_service is None:
+            raise gauth.AuthenticationError(f"Failed to get Gmail service for user {user_id}. User might not be authenticated or authorized.")
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
+        emails = await asyncio.to_thread(gmail_service.users().messages().list(userId='me', q=query, maxResults=max_results).execute) # Direct API call
+        # Wrap the list of email dicts in TextContent after JSON serialization
+        return [TextContent(type="text", text=json.dumps(emails.get('messages', [])))] # Return only messages list
+
+    except gauth.AuthenticationError as auth_error: # Catch specific auth error
         logger.warning(f"Authentication required for query_gmail_emails (user: {user_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
+        # Re-raise the standard authentication error; decorator handles JSONRPC formatting
+        raise auth_error
     except HttpError as e:
         logger.error(f"Google API HTTP error in query_gmail_emails for user "
                      f"{user_id}: {e}", exc_info=True)
         error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        # Raise standard runtime error; decorator handles JSONRPC formatting
+        raise RuntimeError(error_message)
     except Exception as e:
         logger.error(f"Unexpected error in query_gmail_emails for user "
                      f"{user_id}: {e}", exc_info=True)
         error_message = f"Failed to query emails for {user_id}. Reason: {e}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        # Raise standard runtime error; decorator handles JSONRPC formatting
+        raise RuntimeError(error_message)
 
 async def get_gmail_email(
-    user_id: str, # Added missing user_id parameter
-    oauth_state: str,
+    user_id: str,
+    # oauth_state: str, # Removed
     email_id: str
 ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
-    """Retrieves a specific Gmail email by ID."""
+    """Retrieves a specific Gmail email by ID, including attachments."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="User ID not provided to tool.") # Updated error message
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        gmail_service = gmail.GmailService(credentials=credentials)
-        email, attachments = await asyncio.to_thread(gmail_service.get_email_by_id_with_attachments, email_id)
+        if not user_id: raise ValueError("User ID not provided.")
+        # credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state) # Removed
+        # gmail_service = gmail.GmailService(credentials=credentials) # Removed
+        gmail_service = await asyncio.to_thread(gauth.get_google_service, 'gmail', 'v1', user_id)
+        if gmail_service is None:
+            raise gauth.AuthenticationError(f"Failed to get Gmail service for user {user_id}. User might not be authenticated or authorized.")
 
-        if email is None:
-            # Assuming service layer raises specific error if not found
-            logger.error(f"get_email_by_id_with_attachments returned None for email "
-                         f"{email_id}, user {user_id}")
-            error_message = f"Email with ID {email_id} not found or could not be retrieved."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        # Fetch email with full format, including headers and payload for attachments
+        email_data = await asyncio.to_thread(
+            gmail_service.users().messages().get(userId='me', id=email_id, format='full').execute
+        )
 
-        email["attachments"] = attachments
+        # Extract attachments (simplified example, real parsing might be more complex)
+        attachments = []
+        if 'payload' in email_data and 'parts' in email_data['payload']:
+            for part in email_data['payload']['parts']:
+                if part.get('filename') and part.get('body') and part['body'].get('attachmentId'):
+                    attachments.append({
+                        "filename": part['filename'],
+                        "mimeType": part['mimeType'],
+                        "attachmentId": part['body']['attachmentId'],
+                        "size": part['body'].get('size')
+                    })
+
+        email_data["attachments"] = attachments # Add extracted attachment info
         # Wrap the email dict in TextContent after JSON serialization
-        return [TextContent(type="text", text=json.dumps(email))]
+        return [TextContent(type="text", text=json.dumps(email_data))]
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
+    except gauth.AuthenticationError as auth_error:
         logger.warning(f"Authentication required for get_gmail_email "
                        f"(user: {user_id}, email: {email_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
+        raise auth_error # Re-raise standard error
     except HttpError as e:
         logger.error(f"Google API HTTP error in get_gmail_email for user "
                      f"{user_id}, email {email_id}: {e}", exc_info=True)
-        error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
-    except Exception as e: # Catch potential specific errors from service layer if added
+        if e.resp.status == 404:
+             raise RuntimeError(f"Email with ID {email_id} not found.")
+        else:
+            error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+            raise RuntimeError(error_message) # Raise standard error
+    except Exception as e:
         logger.error(f"Unexpected error in get_gmail_email for user "
                      f"{user_id}, email {email_id}: {e}", exc_info=True)
         error_message = f"Failed to get email {email_id} for {user_id}. Reason: {e}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        raise RuntimeError(error_message) # Raise standard error
 
 async def bulk_get_gmail_emails(
-    oauth_state: str,
+    # oauth_state: str, # Removed
     email_ids: list[str],
     user_id: str
-) -> Sequence[TextContent | ImageContent | EmbeddedResource]: # Removed user_id param
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Retrieves multiple Gmail emails by ID."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        gmail_service = gmail.GmailService(credentials=credentials)
+        if not user_id: raise ValueError("User ID not provided.")
+        # credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state) # Removed
+        # gmail_service = gmail.GmailService(credentials=credentials) # Removed
+        gmail_service = await asyncio.to_thread(gauth.get_google_service, 'gmail', 'v1', user_id)
+        if gmail_service is None:
+            raise gauth.AuthenticationError(f"Failed to get Gmail service for user {user_id}. User might not be authenticated or authorized.")
 
-        tasks = []
-        for email_id in email_ids:
-            # Wrap individual calls in to_thread for potential parallelism (though GIL limits true parallelism)
-            # Or consider a batch API if available and more efficient
-            tasks.append(asyncio.to_thread(gmail_service.get_email_by_id_with_attachments, email_id))
+        async def _get_single_email(email_id: str):
+            """Helper to get a single email, handling errors."""
+            try:
+                # Fetch email with full format
+                email_data = await asyncio.to_thread(
+                    gmail_service.users().messages().get(userId='me', id=email_id, format='full').execute
+                )
+                # Extract attachments (simplified)
+                attachments = []
+                if 'payload' in email_data and 'parts' in email_data['payload']:
+                    for part in email_data['payload']['parts']:
+                        if part.get('filename') and part.get('body') and part['body'].get('attachmentId'):
+                            attachments.append({
+                                "filename": part['filename'],
+                                "mimeType": part['mimeType'],
+                                "attachmentId": part['body']['attachmentId'],
+                                "size": part['body'].get('size')
+                            })
+                email_data["attachments"] = attachments
+                return email_data
+            except HttpError as e:
+                 logger.error(f"Error retrieving email {email_id} in bulk for user {user_id}: {e}", exc_info=True)
+                 return {"email_id": email_id, "error": f"Google API Error: {e.resp.status} {e.reason}"}
+            except Exception as e:
+                logger.error(f"Error retrieving email {email_id} in bulk for user {user_id}: {e}", exc_info=True)
+                return {"email_id": email_id, "error": str(e)}
 
-        email_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        processed_results = []
-        for i, result in enumerate(email_results):
-            email_id = email_ids[i]
-            if isinstance(result, Exception):
-                logger.error(f"Error retrieving email {email_id} in bulk operation for user "
-                             f"{user_id}: {result}", exc_info=result)
-                # Include error marker in results
-                processed_results.append({"email_id": email_id, "error": str(result)})
-            elif result and result[0] is not None: # result is (email, attachments) tuple
-                email, attachments = result
-                email["attachments"] = attachments
-                processed_results.append(email)
-            else:
-                logger.warning(f"Failed to retrieve email {email_id} (returned None) in bulk "
-                               f"operation for user {user_id}.")
-                processed_results.append({"email_id": email_id, "error": "Email not found or retrieval failed."})
-
-
-        if not processed_results:
-            # This case might be less likely now errors are included
-            error_message = "Failed to retrieve or process any emails from the provided IDs."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        tasks = [_get_single_email(email_id) for email_id in email_ids]
+        email_results = await asyncio.gather(*tasks) # Exceptions handled within _get_single_email
 
         # Wrap the list of results/errors in TextContent after JSON serialization
-        return [TextContent(type="text", text=json.dumps(processed_results))]
+        return [TextContent(type="text", text=json.dumps(email_results))]
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
+    except gauth.AuthenticationError as auth_error:
         logger.warning(f"Authentication required for bulk_get_gmail_emails (user: {user_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
-    except HttpError as e: # Catch HttpError if it occurs during batch processing (less likely here)
-        logger.error(f"Google API HTTP error during bulk_get_gmail_emails for user "
+        raise auth_error # Re-raise standard error
+    # HttpError during initial service get or other setup errors
+    except HttpError as e:
+        logger.error(f"Google API HTTP error during bulk_get_gmail_emails setup for user "
                      f"{user_id}: {e}", exc_info=True)
-        error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        error_message = f"Google API Error during setup: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+        raise RuntimeError(error_message) # Raise standard error
     except Exception as e:
-        logger.error(f"Unexpected error in bulk_get_gmail_emails for user "
+        logger.error(f"Unexpected error in bulk_get_gmail_emails setup for user "
                      f"{user_id}: {e}", exc_info=True)
-        # Return partial results if available, otherwise raise generic error
-        if 'processed_results' in locals() and processed_results:
-            logger.warning(f"Returning partial results for bulk_get_gmail_emails "
-                           f"due to error: {e}")
-            # Optionally add a top-level error marker to the list
-            processed_results.append({"error": f"Bulk operation failed partially. Reason: {e}"})
-            # Wrap the list of results/errors in TextContent after JSON serialization
-            return [TextContent(type="text", text=json.dumps(processed_results))]
-        else:
-            error_message = f"Failed bulk email retrieval for {user_id}. Reason: {e}"
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        error_message = f"Failed bulk email retrieval setup for {user_id}. Reason: {e}"
+        raise RuntimeError(error_message) # Raise standard error
 
 async def get_gmail_attachment(
-    oauth_state: str,
+    # oauth_state: str, # Removed
     message_id: str,
     attachment_id: str,
-    mime_type: str,
-    filename: str,
+    mime_type: str, # Keep for EmbeddedResource return type hint, though not strictly needed for API call
+    filename: str,  # Keep for EmbeddedResource return type hint and save_to_disk logic
     user_id: str,
     save_to_disk: str | None = None
 ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Retrieves a Gmail attachment."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        gmail_service = gmail.GmailService(credentials=credentials)
-        attachment_data = await asyncio.to_thread(gmail_service.get_attachment, message_id, attachment_id)
+        if not user_id: raise ValueError("User ID not provided.")
+        # credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state) # Removed
+        # gmail_service = gmail.GmailService(credentials=credentials) # Removed
+        gmail_service = await asyncio.to_thread(gauth.get_google_service, 'gmail', 'v1', user_id)
+        if gmail_service is None:
+            raise gauth.AuthenticationError(f"Failed to get Gmail service for user {user_id}. User might not be authenticated or authorized.")
 
-        if attachment_data is None:
-            # Assuming service layer raises specific error
-            logger.error(f"get_attachment returned None for msg {message_id}, "
-                         f"att {attachment_id}, user {user_id}")
-            error_message = f"Failed to retrieve attachment {attachment_id} from message {message_id}. It might not exist or an error occurred."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        # Fetch attachment data directly using the API
+        attachment_data = await asyncio.to_thread(
+            gmail_service.users().messages().attachments().get(
+                userId='me', messageId=message_id, id=attachment_id
+            ).execute
+        )
 
         file_data = attachment_data.get("data")
         if not file_data:
             logger.error(f"Attachment {attachment_id} from message {message_id} contained no data "
                          f"for user {user_id}")
-            error_message = f"Attachment {attachment_id} from message {message_id} contained no data."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            raise RuntimeError(f"Attachment {attachment_id} from message {message_id} contained no data.")
 
         attachment_url = f"attachment://gmail/{message_id}/{attachment_id}/{filename}"
 
@@ -238,7 +236,9 @@ async def get_gmail_attachment(
                 # Decoding and writing are potentially blocking
                 decoded_data = await asyncio.to_thread(decode_base64_data, file_data)
                 # Ensure directory exists (sync is ok here, usually fast)
-                os.makedirs(os.path.dirname(save_to_disk), exist_ok=True)
+                save_dir = os.path.dirname(save_to_disk)
+                if save_dir: # Avoid error if saving to current dir
+                    os.makedirs(save_dir, exist_ok=True)
                 # Use async file I/O if available/necessary, otherwise thread
                 async with asyncio.Lock(): # Basic lock if writing to shared locations, though unique paths assumed
                     await asyncio.to_thread(lambda: open(save_to_disk, "wb").write(decoded_data))
@@ -249,56 +249,48 @@ async def get_gmail_attachment(
             except Exception as save_e:
                 logger.error(f"Error saving attachment {filename} to {save_to_disk} "
                              f"for user {user_id}: {save_e}", exc_info=True)
-                error_message = f"Failed to save attachment {filename} to {save_to_disk}. Reason: {save_e}"
-                return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+                raise RuntimeError(f"Failed to save attachment {filename} to {save_to_disk}. Reason: {save_e}")
         else:
-            # Return as embedded resource (this part is already correct)
+            # Return as embedded resource
             return EmbeddedResource(
                 type="resource",
                 resource={
                     "blob": file_data, # Send base64 data directly
                     "uri": attachment_url,
-                    "mimeType": mime_type,
+                    "mimeType": mime_type, # Use provided mime_type
                 },
             )
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
+    except gauth.AuthenticationError as auth_error:
         logger.warning(f"Authentication required for get_gmail_attachment "
                        f"(user: {user_id}, msg: {message_id}, att: {attachment_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
+        raise auth_error # Re-raise standard error
     except HttpError as e:
          # Check for 404 specifically
         if e.resp.status == 404:
             logger.warning(f"Attachment {attachment_id} or message {message_id} not found "
                            f"for user {user_id}: {e}")
-            error_message = f"Attachment {attachment_id} or message {message_id} not found."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            raise RuntimeError(f"Attachment {attachment_id} or message {message_id} not found.")
         else:
             logger.error(f"Google API HTTP error in get_gmail_attachment for user "
                          f"{user_id}, msg {message_id}, att {attachment_id}: {e}", exc_info=True)
             error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            raise RuntimeError(error_message) # Raise standard error
     except base64.binascii.Error as b64_error: # Catch potential decoding errors
         logger.error(f"Base64 decoding error for attachment {attachment_id}, msg {message_id}, "
                      f"user {user_id}: {b64_error}", exc_info=True)
         error_message = f"Failed to decode attachment data. Reason: {b64_error}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        raise RuntimeError(error_message) # Raise standard error
     except Exception as e:
         logger.error(f"Unexpected error in get_gmail_attachment for user "
                      f"{user_id}, msg {message_id}, att {attachment_id}: {e}", exc_info=True)
         error_message = f"Failed to get attachment {attachment_id} for {user_id}. Reason: {e}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        raise RuntimeError(error_message) # Raise standard error
 ##-##
 
 ### ----- WRITE/MODIFY TOOLS ----- ###
 async def create_gmail_draft(
-    oauth_state: str,
+    # oauth_state: str, # Removed
     to: str,
     subject: str,
     body: str,
@@ -307,243 +299,282 @@ async def create_gmail_draft(
 ) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Creates a new Gmail draft."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        gmail_service = gmail.GmailService(credentials=credentials)
-        draft = await asyncio.to_thread(
-            gmail_service.create_draft,
-            to=to,
-            subject=subject,
-            body=body,
-            cc=cc
-        )
+        if not user_id: raise ValueError("User ID not provided.")
+        # credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state) # Removed
+        # gmail_service = gmail.GmailService(credentials=credentials) # Removed
+        gmail_service = await asyncio.to_thread(gauth.get_google_service, 'gmail', 'v1', user_id)
+        if gmail_service is None:
+            raise gauth.AuthenticationError(f"Failed to get Gmail service for user {user_id}. User might not be authenticated or authorized.")
 
-        if draft is None:
-            # Assuming service layer raises specific error
-            logger.error(f"create_draft returned None for user {user_id}")
-            error_message = "Failed to create draft email."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        # Construct the email message
+        message_lines = [
+            f"To: {to}",
+        ]
+        if cc:
+            message_lines.append(f"Cc: {','.join(cc)}")
+        message_lines.extend([
+            f"Subject: {subject}",
+            "",
+            body
+        ])
+        raw_message = "\r\n".join(message_lines)
+        encoded_message = base64.urlsafe_b64encode(raw_message.encode('utf-8')).decode('utf-8')
+
+        draft_body = {'message': {'raw': encoded_message}}
+        draft = await asyncio.to_thread(
+            gmail_service.users().drafts().create(userId='me', body=draft_body).execute
+        )
 
         # Wrap the draft dict in TextContent after JSON serialization
         return [TextContent(type="text", text=json.dumps(draft))]
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
+    except gauth.AuthenticationError as auth_error:
         logger.warning(f"Authentication required for create_gmail_draft (user: {user_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
+        raise auth_error # Re-raise standard error
     except HttpError as e:
         logger.error(f"Google API HTTP error in create_gmail_draft for user "
                      f"{user_id}: {e}", exc_info=True)
         error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        raise RuntimeError(error_message) # Raise standard error
     except Exception as e:
         logger.error(f"Unexpected error in create_gmail_draft for user "
                      f"{user_id}: {e}", exc_info=True)
         error_message = f"Failed to create draft for {user_id}. Reason: {e}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        raise RuntimeError(error_message) # Raise standard error
 
 async def delete_gmail_draft(
-    oauth_state: str,
+    # oauth_state: str, # Removed
     draft_id: str,
     user_id: str
-) -> Sequence[TextContent | ImageContent | EmbeddedResource]: # Removed user_id param
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Deletes a Gmail draft by ID."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        gmail_service = gmail.GmailService(credentials=credentials)
-        success = await asyncio.to_thread(gmail_service.delete_draft, draft_id)
+        if not user_id: raise ValueError("User ID not provided.")
+        # credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state) # Removed
+        # gmail_service = gmail.GmailService(credentials=credentials) # Removed
+        gmail_service = await asyncio.to_thread(gauth.get_google_service, 'gmail', 'v1', user_id)
+        if gmail_service is None:
+            raise gauth.AuthenticationError(f"Failed to get Gmail service for user {user_id}. User might not be authenticated or authorized.")
 
-        if success:
-             # Return a simple success message or confirmation object
-             status_dict = {"status": "success", "message": f"Successfully deleted draft {draft_id}"}
-             return [TextContent(type="text", text=json.dumps(status_dict))]
-        else:
-             # Assuming service layer raises specific error if deletion fails
-            logger.error(f"delete_draft returned False for draft {draft_id}, user {user_id}")
-            error_message = f"Failed to delete draft with ID: {draft_id}. It might not exist or an error occurred."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        # API returns an empty body on success, raises HttpError otherwise
+        await asyncio.to_thread(
+            gmail_service.users().drafts().delete(userId='me', id=draft_id).execute
+        )
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
+        # Return a simple success message or confirmation object
+        status_dict = {"status": "success", "message": f"Successfully deleted draft {draft_id}"}
+        return [TextContent(type="text", text=json.dumps(status_dict))]
+
+    except gauth.AuthenticationError as auth_error:
         logger.warning(f"Authentication required for delete_gmail_draft "
                        f"(user: {user_id}, draft: {draft_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
+        raise auth_error # Re-raise standard error
     except HttpError as e:
         # Check for 404 specifically, could indicate draft not found
         if e.resp.status == 404:
             logger.warning(f"Draft {draft_id} not found for deletion by user "
                            f"{user_id}: {e}")
-            error_message = f"Draft with ID {draft_id} not found."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            raise RuntimeError(f"Draft with ID {draft_id} not found.")
         else:
             logger.error(f"Google API HTTP error in delete_gmail_draft for user "
                          f"{user_id}, draft {draft_id}: {e}", exc_info=True)
             error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            raise RuntimeError(error_message) # Raise standard error
     except Exception as e:
         logger.error(f"Unexpected error in delete_gmail_draft for user "
                      f"{user_id}, draft {draft_id}: {e}", exc_info=True)
         error_message = f"Failed to delete draft {draft_id} for {user_id}. Reason: {e}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        raise RuntimeError(error_message) # Raise standard error
 
 async def reply_gmail_email(
-    oauth_state: str,
+    # oauth_state: str, # Removed
     original_message_id: str,
     reply_body: str,
     user_id: str,
     send: bool = False,
     cc: list[str] | None = None
-) -> Sequence[TextContent | ImageContent | EmbeddedResource]: # Removed user_id param
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Creates and optionally sends a reply to a Gmail message."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        gmail_service = gmail.GmailService(credentials=credentials)
+        if not user_id: raise ValueError("User ID not provided.")
+        # credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state) # Removed
+        # gmail_service = gmail.GmailService(credentials=credentials) # Removed
+        gmail_service = await asyncio.to_thread(gauth.get_google_service, 'gmail', 'v1', user_id)
+        if gmail_service is None:
+            raise gauth.AuthenticationError(f"Failed to get Gmail service for user {user_id}. User might not be authenticated or authorized.")
 
-        # Get original message (potentially blocking)
-        original_message = await asyncio.to_thread(gmail_service.get_email_by_id, original_message_id)
-        if original_message is None:
-            # Assuming service layer raises specific error if not found
-            logger.error(f"get_email_by_id returned None for original message "
-                         f"{original_message_id}, user {user_id}")
-            error_message = f"Original message with ID {original_message_id} not found or could not be retrieved."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
-
-        # Create reply (potentially blocking)
-        result = await asyncio.to_thread(
-            gmail_service.create_reply,
-            original_message=original_message,
-            reply_body=reply_body,
-            send=send,
-            cc=cc
+        # Get original message to extract headers for reply
+        original_message = await asyncio.to_thread(
+            gmail_service.users().messages().get(userId='me', id=original_message_id, format='metadata', metadataHeaders=['Subject', 'From', 'To', 'Cc', 'Message-ID', 'References', 'In-Reply-To']).execute
         )
 
-        if result is None:
-            # Assuming service layer raises specific error
-            logger.error(f"create_reply returned None for user {user_id}, "
-                         f"original msg {original_message_id}")
-            error_message = f"Failed to {'send' if send else 'draft'} reply email."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        # Construct reply headers
+        headers = original_message.get('payload', {}).get('headers', [])
+        subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), '')
+        msg_id = next((h['value'] for h in headers if h['name'].lower() == 'message-id'), '')
+        references = next((h['value'] for h in headers if h['name'].lower() == 'references'), '')
+        in_reply_to = next((h['value'] for h in headers if h['name'].lower() == 'in-reply-to'), msg_id) # Use Message-ID if In-Reply-To missing
+        original_to = next((h['value'] for h in headers if h['name'].lower() == 'to'), '')
+        original_from = next((h['value'] for h in headers if h['name'].lower() == 'from'), '')
+        original_cc = next((h['value'] for h in headers if h['name'].lower() == 'cc'), '')
 
+        reply_subject = f"Re: {subject}" if not subject.lower().startswith("re:") else subject
+        reply_to = original_from # Reply to the sender
+        reply_cc_list = []
+        if cc: # Add explicitly provided CCs
+            reply_cc_list.extend(cc)
+        # Optionally add original To/Cc recipients to the reply CC list (common practice)
+        # if original_to: reply_cc_list.extend([addr.strip() for addr in original_to.split(',')])
+        # if original_cc: reply_cc_list.extend([addr.strip() for addr in original_cc.split(',')])
+        # reply_cc = ','.join(set(reply_cc_list)) # Remove duplicates
+
+        # Construct the reply message
+        message_lines = [
+            f"To: {reply_to}",
+        ]
+        if reply_cc_list:
+             message_lines.append(f"Cc: {','.join(set(reply_cc_list))}") # Use unique CC list
+        message_lines.extend([
+            f"Subject: {reply_subject}",
+            f"In-Reply-To: {in_reply_to}",
+            f"References: {references} {msg_id}".strip(), # Append original msg_id to references
+            "",
+            reply_body
+        ])
+        raw_message = "\r\n".join(message_lines)
+        encoded_message = base64.urlsafe_b64encode(raw_message.encode('utf-8')).decode('utf-8')
+
+        message_body = {'raw': encoded_message, 'threadId': original_message['threadId']}
+
+        if send:
+            # Send the message directly
+            result = await asyncio.to_thread(
+                gmail_service.users().messages().send(userId='me', body=message_body).execute
+            )
+            action = "sent"
+        else:
+            # Create a draft instead
+            draft_body = {'message': message_body}
+            result = await asyncio.to_thread(
+                gmail_service.users().drafts().create(userId='me', body=draft_body).execute
+            )
+            action = "drafted"
+
+        logger.info(f"Reply {action} successfully for user {user_id}, original msg {original_message_id}")
         # Wrap the result dict in TextContent after JSON serialization
         return [TextContent(type="text", text=json.dumps(result))]
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
+    except gauth.AuthenticationError as auth_error:
         logger.warning(f"Authentication required for reply_gmail_email "
                        f"(user: {user_id}, msg: {original_message_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
+        raise auth_error # Re-raise standard error
     except HttpError as e:
-        # Check for 404 on original message fetch?
-        if e.resp.status == 404 and "original_message" not in locals(): # Check if error happened during original message fetch
+        # Check for 404 on original message fetch
+        if e.resp.status == 404 and "original_message" not in locals():
             logger.warning(f"Original message {original_message_id} not found for reply by user "
                            f"{user_id}: {e}")
-            error_message = f"Original message with ID {original_message_id} not found."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            raise RuntimeError(f"Original message with ID {original_message_id} not found.")
         else:
+            # Error during reply creation/sending
             logger.error(f"Google API HTTP error in reply_gmail_email for user "
                          f"{user_id}, msg {original_message_id}: {e}", exc_info=True)
             error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            raise RuntimeError(error_message) # Raise standard error
     except Exception as e:
         logger.error(f"Unexpected error in reply_gmail_email for user "
                      f"{user_id}, msg {original_message_id}: {e}", exc_info=True)
         error_message = f"Failed to reply to email {original_message_id} for {user_id}. Reason: {e}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        raise RuntimeError(error_message) # Raise standard error
 
-async def bulk_save_gmail_attachments(oauth_state: str, attachments: list[dict], user_id: str) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+async def bulk_save_gmail_attachments(
+    # oauth_state: str, # Removed
+    attachments: list[dict], # List of dicts with {"message_id": ..., "attachment_id": ..., "save_path": ...}
+    user_id: str
+) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Saves multiple Gmail attachments to disk."""
     results = []
-    credentials = None
+    # credentials = None # Removed
 
     async def save_single_attachment(gmail_service, attachment_info):
         message_id = attachment_info.get("message_id")
         attachment_id = attachment_info.get("attachment_id")
         save_path = attachment_info.get("save_path")
+        filename = os.path.basename(save_path) # Extract filename for logging
 
         if not all([message_id, attachment_id, save_path]):
-            return {"status": "error", "message": f"Skipping attachment due to missing info: {attachment_info}", "input": attachment_info}
+            logger.warning(f"Skipping attachment due to missing info: {attachment_info}")
+            return {"status": "error", "message": "Missing message_id, attachment_id, or save_path", "input": attachment_info}
 
         try:
-            attachment_data = await asyncio.to_thread(gmail_service.get_attachment, message_id, attachment_id)
-            if attachment_data is None:
-                raise ValueError(f"Attachment {attachment_id} from message {message_id} not found or retrieval failed.")
+            # Fetch attachment data directly using the API
+            attachment_data = await asyncio.to_thread(
+                gmail_service.users().messages().attachments().get(
+                    userId='me', messageId=message_id, id=attachment_id
+                ).execute
+            )
 
             file_data = attachment_data.get("data")
             if not file_data:
-                raise ValueError(f"Attachment {attachment_id} from message {message_id} contained no data.")
+                 raise RuntimeError(f"Attachment {attachment_id} from message {message_id} contained no data.")
 
             decoded_data = await asyncio.to_thread(decode_base64_data, file_data)
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            save_dir = os.path.dirname(save_path)
+            if save_dir: # Avoid error if saving to current dir
+                os.makedirs(save_dir, exist_ok=True)
             async with asyncio.Lock(): # Basic lock
                  await asyncio.to_thread(lambda: open(save_path, "wb").write(decoded_data))
+            logger.info(f"Successfully saved attachment {filename} to {save_path} for user {user_id}")
             return {"status": "success", "message": f"Attachment saved to: {save_path}", "path": save_path}
 
         except HttpError as e:
-            logger.error(f"Google API HTTP error saving attachment {attachment_id} "
-                         f"(msg: {message_id}) to {save_path}: {e}", exc_info=True)
-            return {"status": "error", "message": f"Google API Error saving {attachment_id}: "
-                                                  f"{e.resp.status} {e.reason}", "path": save_path, "input": attachment_info}
+            logger.error(f"Google API HTTP error saving attachment {filename} "
+                         f"(msg: {message_id}, att: {attachment_id}) to {save_path}: {e}", exc_info=True)
+            error_detail = f"Google API Error: {e.resp.status} {e.reason}"
+            if e.resp.status == 404:
+                error_detail = "Attachment or message not found."
+            return {"status": "error", "message": error_detail, "path": save_path, "input": attachment_info}
         except base64.binascii.Error as b64_error:
-            logger.error(f"Base64 decoding error saving attachment {attachment_id} "
-                         f"(msg: {message_id}) to {save_path}: {b64_error}", exc_info=True)
-            return {"status": "error", "message": f"Decoding error for {attachment_id}: "
-                                                  f"{b64_error}", "path": save_path, "input": attachment_info}
+            logger.error(f"Base64 decoding error saving attachment {filename} "
+                         f"(msg: {message_id}, att: {attachment_id}) to {save_path}: {b64_error}", exc_info=True)
+            return {"status": "error", "message": f"Decoding error: {b64_error}", "path": save_path, "input": attachment_info}
         except Exception as inner_e:
-            logger.error(f"Error processing attachment {attachment_id} (msg: {message_id}) "
+            logger.error(f"Error processing attachment {filename} (msg: {message_id}, att: {attachment_id}) "
                          f"to {save_path} in bulk save: {inner_e}", exc_info=True)
-            return {"status": "error", "message": f"Failed to save attachment {attachment_id} "
-                                                  f"to {save_path}. Reason: {inner_e}", "path": save_path, "input": attachment_info}
+            return {"status": "error", "message": f"Failed to save attachment. Reason: {inner_e}", "path": save_path, "input": attachment_info}
 
 
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        gmail_service = gmail.GmailService(credentials=credentials)
+        if not user_id: raise ValueError("User ID not provided.")
+        # credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state) # Removed
+        # gmail_service = gmail.GmailService(credentials=credentials) # Removed
+        gmail_service = await asyncio.to_thread(gauth.get_google_service, 'gmail', 'v1', user_id)
+        if gmail_service is None:
+            raise gauth.AuthenticationError(f"Failed to get Gmail service for user {user_id}. User might not be authenticated or authorized.")
 
         # Create tasks for each attachment save
         tasks = [save_single_attachment(gmail_service, att_info) for att_info in attachments]
-        results = await asyncio.gather(*tasks) # Exceptions are returned in results
+        results = await asyncio.gather(*tasks) # Exceptions handled within save_single_attachment
 
         # Wrap the list of status dicts in TextContent after JSON serialization
         return [TextContent(type="text", text=json.dumps(results))]
 
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
+    except gauth.AuthenticationError as auth_error:
         logger.warning(f"Authentication required for bulk_save_gmail_attachments "
                        f"(user: {user_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
-    # HttpError and other exceptions are handled within save_single_attachment now
+        raise auth_error # Re-raise standard error
+    # HttpError during initial service get or other setup errors
+    except HttpError as e:
+        logger.error(f"Google API HTTP error during bulk_save_gmail_attachments setup for user "
+                     f"{user_id}: {e}", exc_info=True)
+        error_message = f"Google API Error during setup: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
+        raise RuntimeError(error_message) # Raise standard error
     except Exception as e:
         # Catch errors during initial auth or task setup
         logger.error(f"Unexpected error setting up bulk_save_gmail_attachments for user "
                      f"{user_id}: {e}", exc_info=True)
         error_message = f"Failed bulk attachment save setup for {user_id}. Reason: {e}"
-        # Since this is a bulk operation, returning partial results might be better,
-        # but for now, let's return a top-level error consistent with the pattern.
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        raise RuntimeError(error_message) # Raise standard error
 ##-##
 
 ##-##

@@ -26,10 +26,12 @@ email = "circa@indepreneur.io"
 requires = [ "hatchling",]
 build-backend = "hatchling.build"
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     "pyright>=1.1.389",
-    "pytest>=8.0"
+    "pytest>=8.0",
+    "pytest-mock>=3.10.0",
+    "pytest-asyncio>=0.23.7"
 ]
 
 [project.scripts]

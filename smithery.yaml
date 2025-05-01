@@ -22,4 +22,4 @@ startCommand:
   commandFunction:
     # A function that produces the CLI command to start the MCP on stdio.
     |-
-    (config) => ({command: 'uv', args: ['run', 'mcp-gsuite', '--user-id', config.userId]})
+    (config) => ({command: 'uv', args: ['run', 'mcp-google-workspace', '--user-id', config.userId]})

@@ -4,7 +4,7 @@ This server provides MCP (Model Context Protocol) access to Google Workspace ser
 
 ## Overview
 
-The `mcp-gsuite` server allows language models and other MCP clients to interact with a user's Google account data and perform actions like:
+The `mcp-google-workspace` server allows language models and other MCP clients to interact with a user's Google account data and perform actions like:
 
 *   Querying, reading, drafting, and replying to emails (Gmail)
 *   Listing calendars and events, creating/deleting events (Calendar)
@@ -23,7 +23,7 @@ The `mcp-gsuite` server allows language models and other MCP clients to interact
 
 ### 1. Configuration Files
 
-Create the necessary configuration files within a `config` directory (e.g., `mcp-servers/mcp-gsuite/config`):
+Create the necessary configuration files within a `config` directory (e.g., `mcp-servers/mcp-google-workspace/config`):
 
 *   **`.env`**: Define environment variables, especially `REDIS_MASTER_HOST` if not using the default `redis-master`.
     ```env
@@ -51,8 +51,8 @@ Build and run the server using Docker Compose from the `mcp-servers` directory:
 
 ```bash
 cd mcp-servers
-docker-compose build mcp-gsuite
-docker-compose up -d mcp-gsuite
+docker-compose build mcp-google-workspace
+docker-compose up -d mcp-google-workspace
 # Ensure your Redis service is also running if managed separately
 ```
 
@@ -92,10 +92,10 @@ servers:
       commandFunction:
         # A function that produces the CLI command to start the MCP on stdio.
         |-
-        (config) => ({command: 'uv', args: ['run', 'mcp-gsuite', '--user-id', config.userId]})
+        (config) => ({command: 'uv', args: ['run', 'mcp-google-workspace', '--user-id', config.userId]})
 
 ```
-*Note: The `commandFunction` assumes you are running the server via `uv run mcp-gsuite` within its container or environment. Adjust the `command` and `args` if you are using a different execution method (e.g., `docker exec`). The paths for `gauthFile` and `accountsFile` in the schema are primarily for validation/documentation; only `userId` is passed as a direct CLI argument.*
+*Note: The `commandFunction` assumes you are running the server via `uv run mcp-google-workspace` within its container or environment. Adjust the `command` and `args` if you are using a different execution method (e.g., `docker exec`). The paths for `gauthFile` and `accountsFile` in the schema are primarily for validation/documentation; only `userId` is passed as a direct CLI argument.*
 
 **Using Standard MCP Configuration (`mcp_config.json`):**
 
@@ -114,7 +114,7 @@ If your client uses a standard JSON configuration:
         // Command to execute the server. Adjust based on your setup.
         // This example assumes running within the container via 'uv'.
         // It requires the USER_ID to be passed.
-        "command": ["uv", "run", "mcp-gsuite", "--user-id", "YOUR_USER_EMAIL@example.com"]
+        "command": ["uv", "run", "mcp-google-workspace", "--user-id", "YOUR_USER_EMAIL@example.com"]
       },
       // Configuration options (if your client supports passing them)
       // Note: These are not directly used by the command but might be needed
@@ -130,11 +130,11 @@ If your client uses a standard JSON configuration:
 ```
 *Replace `YOUR_USER_EMAIL@example.com` with the actual user email.*
 *Adjust the `command` array based on how you execute the server process (e.g., using `docker exec`).*
-*The paths in the `config` object might be needed by the client or an orchestrator (like `mcp-aggregator`) to manage the server lifecycle or authentication, even though they aren't passed directly to the `mcp-gsuite` server command.*
+*The paths in the `config` object might be needed by the client or an orchestrator (like `mcp-aggregator`) to manage the server lifecycle or authentication, even though they aren't passed directly to the `mcp-google-workspace` server command.*
 
 ## Authentication Flow
 
-1.  The client (e.g., Smithery, `mcp-aggregator`) starts the `mcp-gsuite` server, providing the target `--user-id`.
+1.  The client (e.g., Smithery, `mcp-aggregator`) starts the `mcp-google-workspace` server, providing the target `--user-id`.
 2.  When a tool requiring authentication is called, the tool attempts to load credentials using the `user_id`.
 3.  If credentials are valid (or refreshed successfully using the token stored in Redis), the tool executes.
 4.  If credentials are missing or invalid, the tool returns a specific `JSONRPCError` (code `-32001`) with an `authUrl` and `state` in the `data` field.
@@ -142,7 +142,7 @@ If your client uses a standard JSON configuration:
     *   Presenting the `authUrl` to the user.
     *   Handling the redirect after user consent (which goes to the `REDIRECT_URI` configured in the Google Cloud Console, e.g., `https://server.indepreneur.io/mcp/oauth/callback`).
     *   Capturing the authorization `code` and `state` from the redirect.
-    *   Calling the `mcp-gsuite` server's `gauth.exchange_code(state, code, user_id)` function (likely via a separate mechanism or tool if exposed, or handled entirely by an aggregator). This exchanges the code, stores the refresh token in Redis, and notifies the client/aggregator via Redis pub/sub (`gsuite_auth_success` channel) using the original `state`.
+    *   Calling the `mcp-google-workspace` server's `gauth.exchange_code(state, code, user_id)` function (likely via a separate mechanism or tool if exposed, or handled entirely by an aggregator). This exchanges the code, stores the refresh token in Redis, and notifies the client/aggregator via Redis pub/sub (`gsuite_auth_success` channel) using the original `state`.
 6.  Subsequent tool calls should succeed using the stored refresh token.
 
 ## Development Notes

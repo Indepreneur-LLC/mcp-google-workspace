@@ -11,15 +11,14 @@ import json
 ## ===== THIRD-PARTY ===== ##
 from mcp.types import (
     EmbeddedResource,
-    JSONRPCError,
     TextContent,
 )
-from googleapiclient.errors import HttpError # Added import
+from googleapiclient.errors import HttpError
+import google.auth.exceptions
 ##-##
 
 ## ===== LOCAL ===== ##
 from . import gauth
-from . import drive
 ##-##
 
 #-#
@@ -38,181 +37,177 @@ logger = logging.getLogger(__name__)
 
 ### ----- READ/QUERY TOOLS ----- ###
 async def list_drive_files(
-    oauth_state: str,
     user_id: str,
     query: str | None = None,
     page_size: int = 100,
     fields: str = "nextPageToken, files(id, name, mimeType, size, modifiedTime, parents)"
-) -> Sequence[TextContent | EmbeddedResource]: # Removed user_id param
+) -> Sequence[TextContent | EmbeddedResource]:
     """Lists Google Drive files."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        # Assuming get_drive_service is lightweight or already handles async internally if needed
-        # If get_drive_service itself involves I/O, wrap it too. For now, assume it's fast.
-        service = drive.get_drive_service(credentials)
-        files = await asyncio.to_thread(drive.list_files, service, page_size=page_size, query=query, fields=fields)
-        # Assuming list_files returns the file list object or raises error
+        if not user_id: raise ValueError("user_id must be provided.") # Use standard error
+
+        # Get service using gauth helper
+        service = await asyncio.to_thread(gauth.get_google_service, 'drive', 'v3', user_id)
+        if service is None:
+            # This case should ideally be handled by get_google_service raising AuthenticationError
+            logger.error(f"Failed to obtain Google Drive service for user {user_id}. Credentials might be missing or invalid.")
+            raise gauth.AuthenticationError(f"Failed to obtain Google Drive service for user {user_id}. Authentication may be required or invalid.")
+
+        # Call the underlying drive function (assuming it's synchronous)
+        list_request = service.files().list(
+            q=query,
+            pageSize=page_size,
+            fields=fields
+        )
+        files = await asyncio.to_thread(list_request.execute)
+
         # Wrap the file list dict in TextContent after JSON serialization
         return [TextContent(type="text", text=json.dumps(files))]
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for list_drive_files (user: {user_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
+    except gauth.AuthenticationError as auth_error:
+        # Re-raise the specific authentication error for the MCP server to handle
+        logger.warning(f"Authentication error in list_drive_files for user {user_id}: {auth_error}")
+        raise auth_error # Propagate the error
     except HttpError as e:
-        logger.error(f"Google API HTTP error in list_drive_files for user "
-                     f"{user_id}: {e}", exc_info=True)
-        error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        logger.error(f"Google API HTTP error in list_drive_files for user {user_id}: {e}", exc_info=True)
+        # Raise a standard runtime error for the MCP server
+        raise RuntimeError(f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in list_drive_files for user "
-                     f"{user_id}: {e}", exc_info=True)
-        error_message = f"Failed to list Drive files for {user_id}. Reason: {e}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        logger.error(f"Unexpected error in list_drive_files for user {user_id}: {e}", exc_info=True)
+        # Raise a standard runtime error
+        raise RuntimeError(f"Failed to list Drive files for {user_id}. Reason: {e}")
 
 async def get_drive_file_metadata(
-    oauth_state: str,
     file_id: str,
     user_id: str,
     fields: str = ("id, name, mimeType, size, modifiedTime, createdTime, "
                    "owners, parents, webViewLink, iconLink")
-) -> Sequence[TextContent | EmbeddedResource]: # Removed user_id param
+) -> Sequence[TextContent | EmbeddedResource]:
     """Gets metadata for a Google Drive file."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        service = drive.get_drive_service(credentials)
-        metadata = await asyncio.to_thread(drive.get_file_metadata, service, file_id=file_id, fields=fields)
-        # Assuming get_file_metadata returns the metadata object or raises error
+        if not user_id: raise ValueError("user_id must be provided.")
+        if not file_id: raise ValueError("file_id must be provided.")
+
+        # Get service using gauth helper
+        service = await asyncio.to_thread(gauth.get_google_service, 'drive', 'v3', user_id)
+        if service is None:
+            logger.error(f"Failed to obtain Google Drive service for user {user_id}.")
+            raise gauth.AuthenticationError(f"Failed to obtain Google Drive service for user {user_id}. Authentication may be required or invalid.")
+
+        # Call the underlying API (assuming synchronous)
+        get_request = service.files().get(fileId=file_id, fields=fields)
+        metadata = await asyncio.to_thread(get_request.execute)
+
         # Wrap the metadata dict in TextContent after JSON serialization
         return [TextContent(type="text", text=json.dumps(metadata))]
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for get_drive_file_metadata "
-                       f"(user: {user_id}, file: {file_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
+    except gauth.AuthenticationError as auth_error:
+        logger.warning(f"Authentication error in get_drive_file_metadata for user {user_id}, file {file_id}: {auth_error}")
+        raise auth_error # Propagate
     except HttpError as e:
         if e.resp.status == 404:
-            logger.warning(f"File {file_id} not found for metadata request by user "
-                           f"{user_id}: {e}")
-            error_message = f"File with ID '{file_id}' not found."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            logger.warning(f"File {file_id} not found for metadata request by user {user_id}: {e}")
+            # Raise a standard FileNotFoundError
+            raise FileNotFoundError(f"File with ID '{file_id}' not found.")
         else:
-            logger.error(f"Google API HTTP error in get_drive_file_metadata for user "
-                         f"{user_id}, file {file_id}: {e}", exc_info=True)
-            error_message = f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            logger.error(f"Google API HTTP error in get_drive_file_metadata for user {user_id}, file {file_id}: {e}", exc_info=True)
+            # Raise a standard runtime error
+            raise RuntimeError(f"Google API Error: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in get_drive_file_metadata for user "
-                     f"{user_id}, file {file_id}: {e}", exc_info=True)
-        error_message = f"Failed to get metadata for file {file_id} for user {user_id}. Reason: {e}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        logger.error(f"Unexpected error in get_drive_file_metadata for user {user_id}, file {file_id}: {e}", exc_info=True)
+        # Raise a standard runtime error
+        raise RuntimeError(f"Failed to get metadata for file {file_id} for user {user_id}. Reason: {e}")
 
-async def download_drive_file(oauth_state: str, file_id: str, user_id: str) -> Sequence[TextContent | EmbeddedResource]:
-    """Downloads a Google Drive file."""
+async def download_drive_file(file_id: str, user_id: str) -> EmbeddedResource:
+    """Downloads a Google Drive file and returns it as an EmbeddedResource."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        service = drive.get_drive_service(credentials) # Assume get_drive_service is fast
+        if not user_id: raise ValueError("user_id must be provided.")
+        if not file_id: raise ValueError("file_id must be provided.")
 
-        # Download file content (blocking)
-        file_content = await asyncio.to_thread(drive.download_file, service, file_id=file_id)
+        # Get service using gauth helper
+        service = await asyncio.to_thread(gauth.get_google_service, 'drive', 'v3', user_id)
+        if service is None:
+            logger.error(f"Failed to obtain Google Drive service for user {user_id}.")
+            raise gauth.AuthenticationError(f"Failed to obtain Google Drive service for user {user_id}. Authentication may be required or invalid.")
 
-        if file_content is None:
-            # Assuming download_file raises specific error if not found (e.g., HttpError 404)
-            logger.error(f"download_file returned None for file {file_id}, user {user_id}")
-            error_message = f"File with ID '{file_id}' not found or could not be downloaded."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
-
-        # Get metadata (potentially blocking)
+        # --- Get Metadata First ---
         try:
-            # Re-getting service might not be necessary if credentials object is updated in place by google-auth
-            metadata = await asyncio.to_thread(drive.get_file_metadata, service, file_id=file_id, fields="name, mimeType")
+            get_request_meta = service.files().get(fileId=file_id, fields="name, mimeType")
+            metadata = await asyncio.to_thread(get_request_meta.execute)
             filename = metadata.get("name", file_id)
             mimetype = metadata.get("mimeType", "application/octet-stream")
         except HttpError as meta_http_error:
-            # Handle 404 specifically for metadata call if it happens after successful download (unlikely)
+            # If metadata fails with 404, the file doesn't exist or isn't accessible
             if meta_http_error.resp.status == 404:
-                logger.warning(f"Metadata not found for downloaded file {file_id} "
-                               f"(user: {user_id}): {meta_http_error}. Using defaults.")
-                filename = file_id
-                mimetype = "application/octet-stream"
+                logger.warning(f"File {file_id} not found for metadata check before download by user {user_id}: {meta_http_error}")
+                raise FileNotFoundError(f"File with ID '{file_id}' not found or access denied.")
+            # Handle 403 for permission issues
+            elif meta_http_error.resp.status == 403:
+                 logger.warning(f"Permission denied getting metadata for file {file_id} for user {user_id}: {meta_http_error}")
+                 raise PermissionError(f"Permission denied to access metadata for file '{file_id}'.")
             else:
-                 # Re-raise other HttpErrors from metadata call
-                 raise meta_http_error
+                # Re-raise other HttpErrors from metadata call
+                logger.error(f"Google API HTTP error getting metadata before download for user {user_id}, file {file_id}: {meta_http_error}", exc_info=True)
+                raise RuntimeError(f"Google API Error getting metadata: {meta_http_error.resp.status} {meta_http_error.reason}. Details: {meta_http_error.content.decode()}")
         except Exception as meta_e:
-            logger.warning(f"Could not get metadata for downloaded file {file_id} "
-                           f"(user: {user_id}): {meta_e}. Using default filename/mimetype.")
-            filename = file_id
-            mimetype = "application/octet-stream"
+            logger.error(f"Unexpected error getting metadata before download for user {user_id}, file {file_id}: {meta_e}", exc_info=True)
+            raise RuntimeError(f"Failed to get metadata before downloading file {file_id}. Reason: {meta_e}")
 
-        # Encode content (potentially blocking for large files)
-        file_content_b64 = await asyncio.to_thread(lambda: base64.b64encode(file_content).decode('utf-8'))
+        # --- Download File Content ---
+        # Use media download request
+        request = service.files().get_media(fileId=file_id)
+        # Execute the download in a thread
+        file_content = await asyncio.to_thread(request.execute)
 
-        # Construct the EmbeddedResource (this part is correct)
+        if file_content is None:
+            # This case might indicate an issue not caught by HttpError (unlikely for download)
+            logger.error(f"Drive API download returned None unexpectedly for file {file_id}, user {user_id}")
+            raise RuntimeError(f"File download for ID '{file_id}' failed unexpectedly after metadata check.")
+
+        # --- Encode and Package ---
+        # Encode content (run in thread for potentially large files)
+        try:
+            file_content_b64 = await asyncio.to_thread(lambda: base64.b64encode(file_content).decode('utf-8'))
+        except Exception as encode_error: # Catch broad exception during encoding
+             logger.error(f"Base64 encoding error for downloaded file {file_id}, user {user_id}: {encode_error}", exc_info=True)
+             raise RuntimeError(f"Failed to encode downloaded file data. Reason: {encode_error}")
+
+
+        # Construct the EmbeddedResource
         resource_dict = {
             "blob": file_content_b64,
             "uri": f"drive://{file_id}/{filename}", # Include filename in URI
             "mimeType": mimetype
         }
-        # Return the EmbeddedResource directly, not in a list
+        # Return the single EmbeddedResource
         return EmbeddedResource(type="resource", resource=resource_dict, title=filename,
                                 description=f"Downloaded content for Google Drive file ID: {file_id}")
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for download_drive_file "
-                       f"(user: {user_id}, file: {file_id}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
+    except gauth.AuthenticationError as auth_error:
+        logger.warning(f"Authentication error in download_drive_file for user {user_id}, file {file_id}: {auth_error}")
+        raise auth_error # Propagate
+    except FileNotFoundError as fnf_error: # Catch specific file not found from metadata check
+        raise fnf_error
+    except PermissionError as perm_error: # Catch specific permission error from metadata check
+        raise perm_error
     except HttpError as e:
-        if e.resp.status == 404:
-            logger.warning(f"File {file_id} not found for download by user "
-                           f"{user_id}: {e}")
-            error_message = f"File with ID '{file_id}' not found."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
-        # Handle 403 for permission issues if needed
+        # Catch errors specifically from the download step (metadata errors handled above)
+        if e.resp.status == 404: # Should have been caught by metadata check, but handle defensively
+            logger.warning(f"File {file_id} not found during download attempt by user {user_id}: {e}")
+            raise FileNotFoundError(f"File with ID '{file_id}' not found during download.")
         elif e.resp.status == 403:
-            logger.warning(f"Permission denied downloading file {file_id} for user "
-                           f"{user_id}: {e}")
-            error_message = f"Permission denied to download file '{file_id}'."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            logger.warning(f"Permission denied downloading file {file_id} for user {user_id}: {e}")
+            raise PermissionError(f"Permission denied to download file '{file_id}'.")
         else:
-            logger.error(f"Google API HTTP error in download_drive_file for user "
-                         f"{user_id}, file {file_id}: {e}", exc_info=True)
-            error_message = f"Google API Error downloading file: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
-    except base64.binascii.Error as b64_error: # Catch potential encoding errors
-        logger.error(f"Base64 encoding error for downloaded file {file_id}, "
-                     f"user {user_id}: {b64_error}", exc_info=True)
-        raise JSONRPCError(code=-32013, message=f"Failed to encode downloaded file data. "
-                                                f"Reason: {b64_error}")
+            logger.error(f"Google API HTTP error during download for user {user_id}, file {file_id}: {e}", exc_info=True)
+            raise RuntimeError(f"Google API Error downloading file: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in download_drive_file for user "
-                     f"{user_id}, file {file_id}: {e}", exc_info=True)
-        error_message = f"Failed to download file {file_id} for user {user_id}. Reason: {e}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        logger.error(f"Unexpected error in download_drive_file for user {user_id}, file {file_id}: {e}", exc_info=True)
+        raise RuntimeError(f"Failed to download file {file_id}. Reason: {e}")
 ##-##
 
 ### ----- WRITE/MODIFY TOOLS ----- ###
 async def upload_drive_file(
-    oauth_state: str,
     file_name: str,
     mime_type: str,
     file_content_b64: str,
@@ -221,73 +216,71 @@ async def upload_drive_file(
 ) -> Sequence[TextContent | EmbeddedResource]:
     """Uploads a file to Google Drive."""
     try:
-        if not user_id: raise JSONRPCError(code=-32000, message="Server user ID not configured.")
-        credentials = await asyncio.to_thread(gauth.get_authenticated_credentials, user_id, oauth_state)
-        service = drive.get_drive_service(credentials)
+        if not user_id: raise ValueError("user_id must be provided.")
+        if not file_name: raise ValueError("file_name must be provided.")
+        if not mime_type: raise ValueError("mime_type must be provided.")
+        if not file_content_b64: raise ValueError("file_content_b64 must be provided.")
 
-        # Decode base64 content (potentially blocking for large content)
+        # Get service using gauth helper
+        service = await asyncio.to_thread(gauth.get_google_service, 'drive', 'v3', user_id)
+        if service is None:
+            logger.error(f"Failed to obtain Google Drive service for user {user_id}.")
+            raise gauth.AuthenticationError(f"Failed to obtain Google Drive service for user {user_id}. Authentication may be required or invalid.")
+
+        # Decode base64 content (run in thread)
         try:
             file_content = await asyncio.to_thread(base64.b64decode, file_content_b64)
-        except base64.binascii.Error as decode_error:
-            logger.error(f"Failed to decode base64 content for upload '{file_name}' "
-                         f"(user: {user_id}): {decode_error}")
-            raise JSONRPCError(code=-32602, message=f"Invalid base64 encoding provided for "
-                                                    f"file '{file_name}'.") from decode_error
+        except Exception as decode_error: # Catch broad exception during decode
+            logger.error(f"Failed to decode base64 content for upload '{file_name}' (user: {user_id}): {decode_error}", exc_info=True)
+            # Raise standard ValueError for bad input
+            raise ValueError(f"Invalid base64 encoding provided for file '{file_name}'.") from decode_error
 
-        # Execute upload (blocking)
-        upload_response = await asyncio.to_thread(
-            drive.upload_file,
-            service,
-            file_name=file_name,
-            mime_type=mime_type,
-            file_content=file_content,
-            folder_id=folder_id
+        # Prepare file metadata
+        file_metadata = {'name': file_name}
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+
+        # Prepare media body
+        # Use io.BytesIO for the media body
+        import io
+        media_body = io.BytesIO(file_content)
+
+        # Execute upload (run in thread)
+        create_request = service.files().create(
+            body=file_metadata,
+            media_body=media_body, # Pass BytesIO directly
+            # media_mime_type=mime_type, # This seems redundant if using MediaIoBaseUpload
+            fields='id, name, webViewLink' # Request useful fields back
         )
+        upload_response = await asyncio.to_thread(create_request.execute)
 
-        if upload_response:
-            # Wrap the upload response dict in TextContent after JSON serialization
-            return [TextContent(type="text", text=json.dumps(upload_response))]
-        else:
-            # This case is less likely if upload_file raises exceptions on failure
-            logger.error(f"drive.upload_file returned None for file '{file_name}', "
-                         f"user {user_id}")
-            error_message = f"Failed to upload file '{file_name}'. The operation did not return details."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        # Wrap the upload response dict in TextContent after JSON serialization
+        return [TextContent(type="text", text=json.dumps(upload_response))]
 
-    except (FileNotFoundError, gauth.AuthenticationError) as auth_error:
-        logger.warning(f"Authentication required for upload_drive_file "
-                       f"(user: {user_id}, file: {file_name}): {auth_error}")
-        # Generate auth URL and raise standard error with data field
-        auth_url = await asyncio.to_thread(gauth.get_auth_url, user_id, oauth_state)
-        raise JSONRPCError(
-            code=-32001, # Custom server error code for auth required
-            message="Google authentication required.",
-            data={"authUrl": auth_url, "state": oauth_state, "reason": str(auth_error)}
-        )
+    except gauth.AuthenticationError as auth_error:
+        logger.warning(f"Authentication error in upload_drive_file for user {user_id}, file '{file_name}': {auth_error}")
+        raise auth_error # Propagate
+    except ValueError as ve: # Catch the ValueError from decoding
+        raise ve # Re-raise it
     except HttpError as e:
         # Check for 404 if folder_id was specified and not found
         if e.resp.status == 404 and folder_id:
-            logger.warning(f"Target folder {folder_id} not found for upload by user "
-                           f"{user_id}: {e}")
-            error_message = f"Target folder with ID '{folder_id}' not found."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
-        # Handle 403 for permission issues if needed
+            logger.warning(f"Target folder {folder_id} not found for upload by user {user_id}: {e}")
+            # Raise FileNotFoundError for the folder
+            raise FileNotFoundError(f"Target folder with ID '{folder_id}' not found.")
+        # Handle 403 for permission issues
         elif e.resp.status == 403:
-            logger.warning(f"Permission denied uploading file '{file_name}' for user "
-                           f"{user_id} (folder: {folder_id}): {e}")
-            error_message = f"Permission denied to upload file '{file_name}' (check folder permissions)."
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+            logger.warning(f"Permission denied uploading file '{file_name}' for user {user_id} (folder: {folder_id}): {e}")
+            # Raise PermissionError
+            raise PermissionError(f"Permission denied to upload file '{file_name}' (check folder permissions).")
         else:
-            logger.error(f"Google API HTTP error in upload_drive_file for user "
-                         f"{user_id}, file {file_name}: {e}", exc_info=True)
-            error_message = f"Google API Error uploading file: {e.resp.status} {e.reason}. Details: {e.content.decode()}"
-            return {"content": [TextContent(type="text", text=error_message)], "isError": True}
-    # ValueError/JSONRPCError from decoding is already handled above
+            logger.error(f"Google API HTTP error in upload_drive_file for user {user_id}, file '{file_name}': {e}", exc_info=True)
+            # Raise standard RuntimeError
+            raise RuntimeError(f"Google API Error uploading file: {e.resp.status} {e.reason}. Details: {e.content.decode()}")
     except Exception as e:
-        logger.error(f"Unexpected error in upload_drive_file for user "
-                     f"{user_id}, file {file_name}: {e}", exc_info=True)
-        error_message = f"Failed to upload file '{file_name}' for user {user_id}. Reason: {e}"
-        return {"content": [TextContent(type="text", text=error_message)], "isError": True}
+        logger.error(f"Unexpected error in upload_drive_file for user {user_id}, file '{file_name}': {e}", exc_info=True)
+        # Raise standard RuntimeError
+        raise RuntimeError(f"Failed to upload file '{file_name}'. Reason: {e}")
 ##-##
 
 ##-##

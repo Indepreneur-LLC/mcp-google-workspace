@@ -19,11 +19,10 @@ from google_auth_oauthlib.flow import Flow
 ###-###
 from pydantic import BaseModel
 import requests
-import redis
 ##-##
 
 ## ===== LOCAL ===== ##
-from skp_redis import redis_client as r
+from skp_redis import redis_client as r # Import from shared path added to PYTHONPATH
 ##-##
 
 #-#
@@ -51,13 +50,13 @@ args, _ = parser.parse_known_args()
 ##-##
 CLIENTSECRETS_LOCATION = args.gauth_file
 
-REDIRECT_URI = 'https://server.indepreneur.io/mcp/oauth/callback' # Updated based on Nginx setup
+REDIRECT_URI = 'https://server.indepreneur.io/mcp/oauth/callback'
 SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://mail.google.com/",
     "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/drive"  # Added full Drive scope
+    "https://www.googleapis.com/auth/drive"
 ]
 ##-##
 

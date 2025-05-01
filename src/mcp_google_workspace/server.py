@@ -27,17 +27,16 @@ from . import gauth
 # ===== GLOBALS ===== #
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("mcp-gsuite")
+logger = logging.getLogger("mcp-google-workspace")
 
-# Global variable to store the user ID for this instance, set in main()
-GLOBAL_USER_ID: str | None = None
+# No global user ID needed for multi-tenant server
 #-##
 
 # ===== FUNCTIONS ===== #
 
 def create_app() -> Server:
     """Factory function to create and configure the MCP Server instance."""
-    app = Server("mcp-gsuite") # Initialize MCP Server inside the factory
+    app = Server("mcp-google-workspace") # Initialize MCP Server inside the factory
 
     # Import tool modules AFTER app is defined so decorators register correctly
     from . import tools_calendar as calendar_tools
@@ -49,20 +48,20 @@ def create_app() -> Server:
     ### ----- DEFINITIONS ----- ###
     # Manually define the tools based on the definitions in tools_*.py files
     ALL_TOOLS = [
-# --- Auth Tool ---
+        # --- Auth Tools ---
         types.Tool(
-            name="check_auth_status",
-            description="Checks the current authentication status for the user and initiates Google OAuth flow if needed.",
+            name="initiate_google_oauth",
+            description="Generates the Google OAuth 2.0 authorization URL for the user to initiate the authentication flow.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "user_email": {"type": "string", "description": "The email address of the user to authenticate."},
-                    "oauth_state": {"type": "string", "description": "An opaque state parameter provided by the caller to correlate the auth flow."}
+                    "user_email": {"type": "string", "description": "The email address of the user initiating the flow (used for logging/context)."},
+                    "oauth_state": {"type": "string", "description": "A unique string provided by the calling application (aggregator) to maintain state across the redirect."}
                 },
                 "required": ["user_email", "oauth_state"]
-            },
-            # Output is implicitly handled by the function (returning AUTH_REQUIRED string or error)
-        ), # &lt;-- Added comma here
+            }
+        ),
+
         # --- Gmail Tools ---
         types.Tool(
             name="query_gmail_emails",
@@ -306,6 +305,8 @@ def create_app() -> Server:
     ### ----- TOOL FUNCTION MAP ----- ###
     # Map tool names to their actual functions
     TOOL_FUNCTION_MAP = {
+        # Auth
+        "initiate_google_oauth": initiate_google_oauth, # Add mapping for the new tool
         # Gmail
         "query_gmail_emails": gmail_tools.query_gmail_emails,
         "get_gmail_email": gmail_tools.get_gmail_email,
@@ -331,6 +332,31 @@ def create_app() -> Server:
     ##-##
 
     ## ===== MCP TOOL HANDLERS ===== ##
+
+    # Separate handler for the auth initiation tool
+    @app.tool()
+    async def initiate_google_oauth(user_email: str, oauth_state: str) -> types.CallToolResult:
+        """
+        Handles the initiate_google_oauth tool call.
+        Generates the Google OAuth URL using gauth.get_auth_url.
+        """
+        logger.info(f"initiate_google_oauth called for user: {user_email} with state: {oauth_state}")
+        try:
+            # Call the gauth function to get the URL, passing the state
+            # Note: user_email is logged but not directly used by get_auth_url
+            auth_url = await asyncio.to_thread(gauth.get_auth_url, state=oauth_state)
+
+            if auth_url:
+                logger.info(f"Successfully generated auth URL for state: {oauth_state}")
+                return types.CallToolResult(content=[types.TextContent(type="text", text=auth_url)], isError=False)
+            else:
+                logger.error(f"Failed to generate auth URL for state: {oauth_state}. gauth.get_auth_url returned None.")
+                return types.CallToolResult(content=[types.TextContent(type="text", text="Failed to generate Google OAuth URL.")], isError=True)
+        except Exception as e:
+            logger.error(f"Error during initiate_google_oauth for state {oauth_state}: {e}", exc_info=True)
+            return types.CallToolResult(content=[types.TextContent(type="text", text=f"An unexpected error occurred: {e}")], isError=True)
+
+
     @app.list_tools()
     async def list_tools() -> list[types.Tool]:
         """Lists all available Google Workspace tools."""
@@ -352,8 +378,16 @@ def create_app() -> Server:
 
         try:
             # Call the actual tool function
-            # Pass the GLOBAL_USER_ID to the tool function
-            result_content = await tool_func(**args_to_pass, user_id=GLOBAL_USER_ID)
+            # Extract user_id from arguments if present (required for multi-tenant)
+            # TODO: Make user_id mandatory in schemas for operational tools in a separate task.
+            user_id_from_args = args_to_pass.pop('user_id', None) # Use pop to remove it before passing rest
+            if not user_id_from_args:
+                 # This check is temporary until schemas are updated.
+                 # For now, tools might fail if they strictly require user_id internally.
+                 logger.error(f"Tool '{name}' called without 'user_id' argument. Multi-tenant refactor needed.")
+                 raise JSONRPCError(code=-32602, message=f"Missing required 'user_id' argument for tool '{name}'.")
+
+            result_content = await tool_func(**args_to_pass, user_id=user_id_from_args)
 
             # Handle the case where the tool function returns the error dict structure
             if isinstance(result_content, dict) and result_content.get("isError"):
@@ -445,43 +479,23 @@ def create_app() -> Server:
 ## ===== MAIN EXECUTION ===== ##
 async def main():
     # --- Argument Parsing ---
-    parser = argparse.ArgumentParser(description="MCP GSuite Server")
-    parser.add_argument(
-        "--user-id",
-        type=str,
-        required=True, # Make user_id mandatory for the server instance
-        help="The primary user ID (email) this server instance will handle."
-    )
-    # Allow unknown args for potential future MCP framework args
-    args, _ = parser.parse_known_args()
-    user_id = args.user_id
+    # No user-specific arguments needed for multi-tenant server
+    logger.info(f"mcp-google-workspace Server starting "
+                 f"on platform: {sys.platform}")
 
-    # Set the global user ID for this server instance
-    global GLOBAL_USER_ID
-    GLOBAL_USER_ID = user_id
-
-    logger.info(f"MCP-GSuite Server starting for user: {GLOBAL_USER_ID} "
-                f"on platform: {sys.platform}")
-
-    # --- Optional: Check configured accounts on startup (using to_thread) ---
+    # --- Optional: Check accounts file exists on startup ---
     try:
         # Wrap synchronous file I/O call in to_thread
         accounts = await asyncio.to_thread(gauth.get_account_info)
         logger.info(f"Found configured accounts: {[acc.email for acc in accounts]}")
-        # Check if the provided GLOBAL_USER_ID matches one of the configured accounts (optional validation)
-        if GLOBAL_USER_ID not in [acc.email for acc in accounts]:
-            logger.warning(f"Provided user_id '{GLOBAL_USER_ID}' not found in "
-                            f"configured accounts file.")
-        else:
-            logger.info(f"Provided user_id '{GLOBAL_USER_ID}' matches a "
-                        f"configured account.")
-        # Note: No credential check here anymore. Credential checks happen per-tool-call.
+        # No user-specific checks needed at startup for multi-tenant server.
+        # Credential checks happen per-tool-call based on user_id passed in args.
     except FileNotFoundError:
         logger.warning(f"Accounts configuration file ({gauth.get_accounts_file()}) "
-                        f"not found. Cannot verify user_id against configuration.")
+                        f"not found. Authentication will likely fail until configured.")
     except Exception as e:
         logger.error(f"Error reading accounts configuration on startup: {e}",
-                    exc_info=True) # Add exc_info
+                     exc_info=True) # Add exc_info
 
     # --- Create the app instance using the factory ---
     app = create_app()
