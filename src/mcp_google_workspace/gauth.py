@@ -19,6 +19,8 @@ from google_auth_oauthlib.flow import Flow
 ###-###
 from pydantic import BaseModel
 import requests
+
+import httpx
 ##-##
 
 ## ===== LOCAL ===== ##
@@ -277,11 +279,32 @@ def exchange_code(state: str, code: str, user_id_hint: str | None = None) -> Goo
         # --- Store Refresh Token --- 
         store_refresh_token_in_redis(user_id, credentials.refresh_token)
 
-        # Notify aggregator (using the original state passed in)
-        notify_aggregator_success(state)
+        # Notify Aggregator Service via HTTP POST
+        aggregator_url = os.environ.get("AGGREGATOR_SERVICE_URL")
+        if not aggregator_url:
+            logging.error("[gauth] AGGREGATOR_SERVICE_URL environment variable not set. Cannot notify aggregator.")
+        elif not state:
+             logging.error("[gauth] State (session_token) is missing. Cannot notify aggregator.")
+        else:
+            callback_endpoint = f"{aggregator_url.rstrip('/')}/auth/google/callback_complete"
+            payload = {"session_token": state}
+            try:
+                # Use synchronous httpx client here as exchange_code is sync
+                with httpx.Client() as client:
+                    response = client.post(callback_endpoint, json=payload, timeout=10.0) # Added timeout
+                    response.raise_for_status() # Raise exception for 4xx/5xx status codes
+                    logging.info(f"[gauth] Successfully notified Aggregator Service at {callback_endpoint} for state: {state}")
+            except httpx.RequestError as exc:
+                logging.error(f"[gauth] HTTP request error notifying Aggregator Service at {callback_endpoint}: {exc}", exc_info=True)
+            except httpx.HTTPStatusError as exc:
+                logging.error(f"[gauth] HTTP status error notifying Aggregator Service at {callback_endpoint}: "
+                              f"Status {exc.response.status_code}, Response: {exc.response.text}", exc_info=True)
+            except Exception as e:
+                 logging.error(f"[gauth] Unexpected error notifying Aggregator Service at {callback_endpoint}: {e}", exc_info=True)
 
-        logging.info(f"[gauth] Successfully exchanged code, stored refresh token for "
-                     f"{user_id}, and notified aggregator.")
+
+        logging.info(f"[gauth] Successfully exchanged code and stored refresh token for {user_id}.")
+        # Removed old aggregator notification log message, added specific logging above.
         return credentials
 
     except FileNotFoundError:

@@ -5,7 +5,7 @@ FROM python:3.13-slim-bookworm
 WORKDIR /app
 
 # Install build dependencies (if needed for any package compilation)
-RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y build-essential socat && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip first
 RUN pip install --upgrade pip
@@ -43,4 +43,4 @@ EXPOSE 8002
 WORKDIR /app # Explicitly set back to /app
 
 # Add a command to keep the container running for 'docker exec'
-CMD ["tail", "-f", "/dev/null"]
+CMD ["socat", "TCP-LISTEN:8002,fork=false,reuseaddr", "EXEC:'python -m mcp_google_workspace.server'"]
