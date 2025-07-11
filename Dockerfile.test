@@ -1,0 +1,37 @@
+FROM python:3.13-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install uv for pip compile
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Copy and install shared dependencies (always needed)
+COPY toast /app/toast
+RUN cd /app/toast && pip install -e .
+
+# Note: mcp-google-workspace doesn't use toastmcp yet (will add after migration)
+
+# Copy service files
+COPY io-mcps/mcp-google-workspace/pyproject.toml ./
+
+# Install container dependencies
+RUN uv pip compile --group container pyproject.toml -o requirements.txt && \
+    pip install -r requirements.txt
+
+# Install test dependencies
+RUN uv pip compile --group test pyproject.toml -o test-requirements.txt && \
+    pip install -r test-requirements.txt
+
+# Install the service itself with no deps
+RUN pip install -e . --no-deps
+
+# Copy source and tests
+COPY io-mcps/mcp-google-workspace/src ./src
+COPY io-mcps/mcp-google-workspace/tests ./tests
+
+# Run tests by default for test containers
+CMD ["python", "-m", "pytest", "-xvs"]
