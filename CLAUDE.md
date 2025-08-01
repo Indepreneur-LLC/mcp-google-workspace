@@ -6,112 +6,116 @@ This file provides guidance to Claude Code when working with the MCP Google Work
 
 Provides Google Workspace API access (Gmail, Calendar, Drive) for Indepreneur team members.
 
-## Current Architecture (Legacy - Pre-Migration)
+## Current Architecture (Migrated to toastmcp)
 
-**Status**: Functional but uses old MCP patterns. Awaiting migration to aloaf.mcp.
+**Status**: Successfully migrated to toastmcp pattern with service account authentication.
 
 ### What's Implemented
 - **Gmail API**: Query, read, bulk read, attachments, drafts, replies
 - **Calendar API**: List calendars, get events, create events, delete events  
 - **Drive API**: List files, get metadata, download files, upload files
-- **Multi-tenant Support**: User ID required for each request
-- **Token Storage**: Redis-based refresh token management
+- **Service Account Authentication**: Domain-wide delegation for @indepreneur.io
+- **toastmcp Pattern**: Decorator-based tool registration with Pydantic models
+- **Namespace**: All tools prefixed with "google:" (e.g., "google:query_emails")
 
-### Current Authentication Flow
-1. User initiates OAuth flow via aggregator
-2. Redirects to Google OAuth consent
-3. Callback to `https://server.indepreneur.io/mcp/oauth/callback`
-4. Stores refresh token in Redis
-5. Uses refresh token for API access
+### New Authentication Architecture
+1. **Service Account**: Uses Google service account with domain-wide delegation
+2. **No OAuth Flow**: Authentication handled entirely by service account
+3. **User Impersonation**: Service account impersonates @indepreneur.io users
+4. **Automatic Access**: Team members authenticated via io_user_model get access
+5. **No Token Storage**: Service account handles all auth internally
 
-### Known Issues
-- **No Domain Restriction**: Currently accepts any Google account (not restricted to @indepreneur.io)
-- **Not Using aloaf.mcp**: Still uses older MCP server patterns
-- **Manual Tool Registration**: No decorator-based pattern
+## Service Implementation
 
-## Migration Plan
+### Architecture Details
 
-### New Architecture
-Remove OAuth entirely - authentication will be handled upstream:
-
-1. **IOStaff Authentication**:
-   - io_user_model identifies IOStaff users during login
-   - Automatically validates access to @indepreneur.io Google Workspace
-   - No separate OAuth flow needed in this service
-
-2. **Service Pattern**:
+1. **Service Definition**:
    ```python
-   from toastmcp import ExtendedALoaf
+   from toastmcp import MCPALoaf
    
-   aloaf = ExtendedALoaf()
+   aloaf = MCPALoaf()
    
-   team = aloaf.mcp.service(
+   service = aloaf.mcp.service(
        name="mcp-google-workspace",
        port=8005,
+       namespace="google",
        allow_users=["team_member"],
-       require_roles=["admin", "specialist", "support"]
+       require_roles=["admin", "specialist", "support", "superuser"]
    )
    ```
 
-3. **Tool Implementation**:
+2. **Tool Pattern**:
    ```python
-   @team.tool
-   async def gmail_query(args: GmailQueryArgs, _auth: dict):
-       """Search Gmail messages"""
-       # Use pre-authorized credentials for @indepreneur.io domain
-       # No OAuth flow - trust aggregator authentication
-       pass
+   @service.tool(name="query_emails")
+   async def query_gmail_emails(args: QueryEmailsArgs, _auth: dict):
+       """Query Gmail emails"""
+       user_email = _auth.get("user_email")
+       gmail_service = await asyncio.to_thread(
+           gauth.get_google_service, 'gmail', 'v1', user_email
+       )
+       # Implementation...
    ```
 
-### Migration Tasks
-
-1. **Remove OAuth Components**:
-   - Delete OAuth flow handlers
-   - Remove token storage logic
-   - Clean up redirect URI configuration
-
-2. **Implement aloaf.mcp Pattern**:
-   - Convert to service decorators
-   - Add Pydantic models for all arguments
-   - Implement async handlers
-
-3. **Add Domain Service Account**:
-   - Use Google Workspace domain-wide delegation
-   - Service account impersonates @indepreneur.io users
-   - No individual OAuth needed
-
-4. **Update Tool Definitions**:
-   - Convert existing tools to new pattern
-   - Add proper descriptions and schemas
-   - Implement error handling
+3. **Service Account Usage**:
+   ```python
+   # In gauth.py
+   credentials = service_account.Credentials.from_service_account_file(
+       SERVICE_ACCOUNT_KEY,
+       scopes=SCOPES
+   )
+   delegated_credentials = credentials.with_subject(user_email)
+   ```
 
 ## Environment Variables
 
-Current (to be updated during migration):
-- `GOOGLE_CLIENT_ID` - OAuth client ID
-- `GOOGLE_CLIENT_SECRET` - OAuth client secret
-- `REDIS_URL` - Redis connection for token storage
+Required (using global .env):
+- `GOOGLE_SERVICE_ACCOUNT_KEY` - Path to service account JSON (default: `/app/secrets/oauth-bot-key.json`)
+- `MCP_PORT` - Service port (default: 8005)
+- `REDIS_HOST` - Redis host for service discovery
+- `REDIS_PORT` - Redis port
+- `REDIS_DB` - Redis database number
 
-Future (post-migration):
-- `GOOGLE_SERVICE_ACCOUNT_KEY` - Service account JSON
-- `GOOGLE_WORKSPACE_DOMAIN` - indepreneur.io
-- `GOOGLE_DELEGATED_ADMIN` - Admin email for impersonation
+The service uses Google's domain-wide delegation, so no OAuth client credentials are needed.
 
 ## Testing
 
 ```bash
-# Current (old pattern)
-cd mcp-google-workspace
-pip install -e .
-python -m mcp_google_workspace
-
-# Future (new pattern)
-python src/service.py
+# Run the service
+python src/mcp_google_workspace/server.py
 ```
+
+The service automatically registers with Redis for discovery by the aggregator.
+
+## Available Tools
+
+All tools are namespaced with "google:" prefix:
+
+### Gmail Tools
+- `google:query_emails` - Search Gmail messages
+- `google:get_email` - Get email by ID
+- `google:bulk_get_emails` - Get multiple emails
+- `google:get_attachment` - Download attachment
+- `google:create_draft` - Create draft email
+- `google:delete_draft` - Delete draft
+- `google:reply_email` - Reply to email
+- `google:bulk_save_attachments` - Save multiple attachments
+
+### Drive Tools
+- `google:list_files` - List Drive files
+- `google:get_file_metadata` - Get file metadata
+- `google:download_file` - Download file
+- `google:upload_file` - Upload file
+
+### Calendar Tools
+- `google:list_calendars` - List all calendars
+- `google:get_events` - Get calendar events
+- `google:create_event` - Create event
+- `google:delete_event` - Delete event
 
 ## Important Notes
 
 - This service is for team members only (IOStaff users)
-- Will enforce @indepreneur.io domain after migration
+- Enforces @indepreneur.io domain via service account
 - No customer access to Google Workspace tools
-- Service account needs domain-wide delegation configured in Google Admin
+- Service account must have domain-wide delegation configured in Google Admin
+- All tools receive user email from `_auth` context (no user_id parameter needed)
