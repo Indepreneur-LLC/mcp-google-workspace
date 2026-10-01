@@ -13,7 +13,7 @@ from googleapiclient.errors import HttpError
 ##-##
 
 ## ===== LOCAL ===== ##
-import gauth
+from . import gauth
 ##-##
 
 #-#

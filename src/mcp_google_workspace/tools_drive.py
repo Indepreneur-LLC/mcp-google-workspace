@@ -15,7 +15,7 @@ import google.auth.exceptions
 ##-##
 
 ## ===== LOCAL ===== ##
-import gauth
+from . import gauth
 ##-##
 
 #-#

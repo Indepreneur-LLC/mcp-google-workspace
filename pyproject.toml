@@ -2,11 +2,21 @@
 name = "mcp-google-workspace"
 version = "0.0.1"
 description = "Google Workspace MCP server for Indepreneur team members"
-# Only workspace-referenced packages for IDE support
 dependencies = [
     "toastmcp",
+    "beautifulsoup4>=4.12.3",
+    "google-api-python-client>=2.154.0",
+    "google-auth>=2.0.0",
+    "httplib2>=0.22.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.1",
+    "pytz>=2024.2",
+    "requests>=2.32.3",
 ]
 requires-python = ">=3.13"
 
 [tool.uv.sources]
 toastmcp = { workspace = true }
+
+[dependency-groups]
+test = ["pytest>=8.0"]

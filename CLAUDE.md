@@ -15,7 +15,7 @@ The service is built on the toastmcp framework and follows the established MCP s
 - `src/mcp_google_workspace/tools_drive.py` - Google Drive API implementations  
 - `src/mcp_google_workspace/tools_calendar.py` - Google Calendar API implementations
 - `pyproject.toml` - Package configuration with toastmcp dependency
-- `requirements.in` - Google API client dependencies
+- `pyproject.toml` - Runtime and test dependencies; container locks are exported from the root `uv.lock`
 - `smithery.yaml` - MCP client configuration schema
 
 ## API Endpoints
@@ -49,7 +49,7 @@ The service is built on the toastmcp framework and follows the established MCP s
 
 ### Provides
 - MCP tools via stdio transport on port 8005
-- Team member Google Workspace access through mcp-aggregator
+- Team member Google Workspace access for clients that still need MCP
 
 ## Configuration
 Required files:
@@ -73,6 +73,6 @@ Runtime configuration:
 - **Namespace Prefixing**: All tools prefixed with "google:" for routing
 
 ## Related Documentation
-- sessions/patterns/by-service/mcp-aggregator.md - Service routing and authentication
+- `../archive/mcp-aggregator/` - Retired routing and authentication implementation
 - sessions/patterns/by-feature/mcp-framework.md - toastmcp usage patterns
 - io-mcps/mcp-base-spec.md - MCP specification compliance

@@ -26,12 +26,10 @@ service = aloaf.mcp.service(
 )
 
 # Import gauth for service account access
-import gauth
+from . import gauth
 
 # Import tool implementations (these need updating too)
-import tools_gmail
-import tools_drive  
-import tools_calendar
+from . import tools_calendar, tools_drive, tools_gmail
 
 # ===== PYDANTIC MODELS ===== #
 
@@ -98,9 +96,7 @@ class UploadDriveFileArgs(BaseModel):
     folder_id: Optional[str] = Field(None, description="Folder ID")
 
 # Calendar tool arguments  
-class ListCalendarsArgs(BaseModel):
-    """No arguments needed for listing calendars"""
-    pass
+class ListCalendarsArgs(BaseModel): """No arguments needed for listing calendars."""
 
 class GetEventsArgs(BaseModel):
     calendar_id: str = Field("primary", description="Calendar ID")
